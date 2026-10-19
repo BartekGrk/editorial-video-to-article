@@ -266,3 +266,32 @@ def test_repeated_words_use_declared_speaker():
     report = verify_draft(d, t)
     assert report.strict_ok
     assert report.inline_quotes[0].speaker == "Jan Kowalski"
+
+
+def test_fourth_review_dash_bypasses():
+    from app.models import ArticleDraft, Transcript, TranscriptSegment
+    from app.verification import dash_quotes
+
+    t = Transcript(segments=[TranscriptSegment(start_seconds=0, speaker="Jan", text="Ceny są za wysokie.")])
+    for paragraph in (
+        "Jan mówi.\n- rząd ukradł nam miliony złotych - mówi Jan.",
+        "- Ceny są za wysokie - mówiąc szczerze, rząd nas oszukał i ukradł miliony.",
+        "- Ceny są za wysokie - Donald Tusk, premier, ukradł nam miliony złotych.",
+    ):
+        d = ArticleDraft(mode="SHORT", title_options=["A b c d", "E f g h"], lead=paragraph, sections=[])
+        assert not verify_draft(d, t).ok, paragraph
+    assert dash_quotes("- Ceny są za wysokie - Jan Kowalski, ekonomista z Warszawy.") == ["Ceny są za wysokie"]
+
+
+def test_unlabelled_and_labelled_repeat_can_be_declared():
+    from app.models import ArticleDraft, Transcript, TranscriptSegment
+
+    text = "Za te trzydzieści groszy nie będę stać."
+    t = Transcript(
+        segments=[TranscriptSegment(start_seconds=0, text=text), TranscriptSegment(start_seconds=10, speaker="Jan", text=text)]
+    )
+    d = ArticleDraft(mode="SHORT", title_options=["A b c d", "E f g h"], lead=f"Słyszymy: „{text}”", sections=[])
+    report = verify_draft(d, t)
+    assert "Jan" in report.attribution_warnings[0]
+    d.quotes.append(Quote(text=text, speaker="Jan", timecode_seconds=10))
+    assert verify_draft(d, t).strict_ok

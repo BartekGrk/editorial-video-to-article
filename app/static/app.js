@@ -334,6 +334,14 @@ function stillOn(hash) {
   return (location.hash || "#/") === hash;
 }
 
+// Wynik akcji przypisujemy tylko, gdy redaktor nadal ogląda ten materiał – inaczej
+// odpowiedź dotycząca materiału A nadpisałaby stan materiału B otwartego w międzyczasie.
+function setMaterial(material) {
+  if (!stillOn(`#/m/${material.id}`)) return false;
+  state.material = material;
+  return true;
+}
+
 async function renderWorkspace(id) {
   clearTimeout(renderWorkspace.timer);
   const [material, profiles] = await Promise.all([api(`/api/materials/${id}`), api("/api/style-profiles")]);
@@ -492,7 +500,7 @@ function drawEvidence(root) {
 
 function analyze(button) {
   return busy(button, "Analizuję…", async () => {
-    state.material = await api(`/api/materials/${state.material.id}/analyze`, { method: "POST" });
+    if (!setMaterial(await api(`/api/materials/${state.material.id}/analyze`, { method: "POST" }))) return;
     state.tab = "evidence";
     drawWorkspace();
     toast("Materiał dowodowy gotowy");
@@ -558,17 +566,18 @@ function bindDeclareQuotes(root, currentDraft) {
   root.querySelector("#declare-quotes")?.addEventListener("click", (e) => {
     const m = state.material;
     const draft = currentDraft();
-    const text = [...draft.title_options, draft.lead, ...draft.sections.flatMap((s) => [s.heading || "", ...s.paragraphs])].join("\n");
-    const known = new Set(draft.quotes.map((q) => `${q.text}|${q.speaker}`));
+    // Porównanie po normalizacji: serwer składa cytat z myślnikami "-", a w tekście może być "–".
+    const norm = (value) => value.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, " ").trim();
+    const text = norm([...draft.title_options, draft.lead, ...draft.sections.flatMap((s) => [s.heading || "", ...s.paragraphs])].join("\n"));
+    const known = new Set(draft.quotes.map((q) => `${norm(q.text)}|${q.speaker}`));
     for (const q of m.report.inline_quotes.filter((c) => c.verified && !c.declared)) {
-      const key = `${q.text}|${q.speaker}`;
-      if (known.has(key) || !text.includes(q.text)) continue;
+      const key = `${norm(q.text)}|${q.speaker}`;
+      if (known.has(key) || !text.includes(norm(q.text))) continue;
       known.add(key);
       draft.quotes.push({ text: q.text, speaker: q.speaker, timecode_seconds: q.found_at_seconds });
     }
     busy(e.target, "Zapisywanie…", async () => {
-      state.material = await api(`/api/materials/${m.id}/draft`, { method: "PUT", body: draft });
-      drawWorkspace();
+      if (setMaterial(await api(`/api/materials/${m.id}/draft`, { method: "PUT", body: draft }))) drawWorkspace();
     });
   });
 }
@@ -649,13 +658,13 @@ function drawDraft(root) {
   form.addEventListener("submit", (event) => {
     event.preventDefault();
     busy(event.submitter, "Sprawdzam…", async () => {
-      state.material = await api(`/api/materials/${m.id}/draft`, { method: "PUT", body: readDraft(form) });
+      if (!setMaterial(await api(`/api/materials/${m.id}/draft`, { method: "PUT", body: readDraft(form) }))) return;
       drawWorkspace();
       toast(state.material.report.ok ? "Zapisano – weryfikacja OK" : "Zapisano – są problemy do poprawy", !state.material.report.ok);
     });
   });
   form.querySelector("#approve").addEventListener("click", (e) => busy(e.target, "…", async () => {
-    state.material = await api(`/api/materials/${m.id}/approve`, { method: "POST" });
+    if (!setMaterial(await api(`/api/materials/${m.id}/approve`, { method: "POST" }))) return;
     drawWorkspace();
     toast("Draft zatwierdzony");
   }));
@@ -684,8 +693,9 @@ function readDraft(form) {
       heading: el.querySelector(".heading").value.trim() || null,
       paragraphs: el.querySelector(".paragraphs").value.split(/\n\s*\n/).map((p) => p.trim()).filter(Boolean),
     })),
-    quotes: d.quotes,
-    claims: d.claims,
+    // Kopie: zmiany list przed zapisem nie mogą trafić do stanu, jeśli zapis się nie uda.
+    quotes: [...d.quotes],
+    claims: [...d.claims],
     editor_notes: form.querySelector("#notes").value.split("\n").map((n) => n.trim()).filter(Boolean),
   };
 }
@@ -714,7 +724,7 @@ function bindGenerator(root) {
     };
     busy(event.target, "Generuję draft…", async () => {
       const result = await api(`/api/materials/${m.id}/draft`, { method: "POST", body });
-      state.material = result.material;
+      if (!setMaterial(result.material)) return;
       state.tab = "draft";
       drawWorkspace();
       toast(result.repaired ? "Draft gotowy (po automatycznej poprawce cytatów)" : "Draft gotowy");

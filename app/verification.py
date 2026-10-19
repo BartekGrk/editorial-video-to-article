@@ -57,14 +57,20 @@ opowiedział opowiedziała opowiadają oceniał oceniała stwierdzał stwierdza�
 zapewniał zapewniała zapewniają ostrzegał ostrzegała ostrzegają przypominał przypominała przypominają
 wspomniał wspomniała wspominają deklarują zapowiadał zapowiadała zapowiadają podsumowywał podsumowywała
 kwitował kwitowała argumentują dopowiadał dopowiadała wtrącał wtrącała zastrzegał zastrzegała zastrzegają
-apelują alarmują narzekają skarżą komentują relacjonują przekonywali mówiąc dodając podkreślając
+apelują alarmują narzekają skarżą komentują relacjonują przekonywali
 """.split()
 # Po myślniku przypisanie zaczyna się czasownikiem mówienia ("mówi", "dodaje"…); jawna lista form,
 # bo prefiks ("doda") łapałby też słowa z wypowiedzi ("dodatkowo"). Każdy inny fragment po
 # myślniku traktujemy jako dalszy ciąg wypowiedzi i sprawdzamy.
-_ATTRIBUTION = re.compile(r"^(?:" + "|".join(_ATTRIBUTION_VERBS) + r")\b")
-# Przypisanie samym nazwiskiem i funkcją: "- Cytat - Jan Kowalski, ekonomista."
-_NAME_ATTRIBUTION = re.compile(r"^[A-ZĄĆĘŁŃÓŚŹŻ][\w-]+(?: [A-ZĄĆĘŁŃÓŚŹŻ][\w-]+)+,\s")
+_VERB_GROUP = "(?:" + "|".join(_ATTRIBUTION_VERBS) + ")"
+_ATTRIBUTION = re.compile(r"^" + _VERB_GROUP + r"\b")
+# Linia zawierająca gdziekolwiek "- mówi …" to wypowiedź z przypisaniem (także od małej litery).
+_HAS_ATTRIBUTION = re.compile(r"\s[-–—]\s+" + _VERB_GROUP + r"\b")
+# Przypisanie samym nazwiskiem i krótką funkcją na końcu linii: "- Cytat - Jan Kowalski, ekonomista."
+# Funkcja bez przecinka i najwyżej 6 słów – inaczej ("Jan Nowak, premier, ukradł…") to dalszy ciąg cytatu.
+_NAME_ATTRIBUTION = re.compile(
+    r"^[A-ZĄĆĘŁŃÓŚŹŻ][\w-]+(?: [A-ZĄĆĘŁŃÓŚŹŻ][\w-]+)+, (?:[^\s,.!?]+ ?){1,6}[.!?]?$"
+)
 # Skrót cytatu wielokropkiem jest dozwolony, ale z samych pojedynczych słów
 # dałoby się skleić zdanie o odwrotnym sensie.
 _MIN_FRAGMENT_WORDS = 3
@@ -217,6 +223,12 @@ def _windows(transcript: Transcript) -> list[str]:
     return transcript._windows
 
 
+def _speaker_agrees(declared: str | None, segment: str | None) -> bool:
+    """Mówca z listy cytatów zgadza się z segmentem. Segment bez mówcy niczego nie wyklucza
+    (te słowa mógł powiedzieć ktokolwiek), więc pasuje do każdej deklaracji."""
+    return segment is None or _same_speaker(declared, segment)
+
+
 def _same_speaker(a: str | None, b: str | None) -> bool:
     return a is not None and b is not None and normalize(a) == normalize(b)
 
@@ -284,11 +296,6 @@ def find_quotes(text: str, transcript: Transcript) -> list[int]:
     return [i for i, window in enumerate(_windows(transcript)) if _matches(options, window)]
 
 
-def find_quote(text: str, transcript: Transcript) -> int | None:
-    matches = find_quotes(text, transcript)
-    return matches[0] if matches else None
-
-
 def dash_quotes(paragraph: str) -> list[str]:
     """Wypowiedzi z akapitu dialogowego "- cytat - mówi X. - Dalszy cytat."
 
@@ -302,7 +309,7 @@ def dash_quotes(paragraph: str) -> list[str]:
         if not _DASH_LINE.match(line):
             continue
         content = _DASH_LINE.sub("", line, count=1)
-        if number > 0 and not (_SENTENCE_START.match(content) or _ATTRIBUTION.search(content)):
+        if number > 0 and not (_SENTENCE_START.match(content) or _HAS_ATTRIBUTION.search(content)):
             continue
         parts = _DASH_SPLIT.split(content)
         current: str | None = parts[0]
@@ -354,14 +361,16 @@ def check_inline_quotes(draft: ArticleDraft, transcript: Transcript) -> list[Inl
         normalized = normalize(text)
         candidates = [q for n, q in declared if n and (_matches(options, n) or n in normalized)]
         index, is_declared = (matches[0] if matches else None), True
-        if matches and any(transcript.segments[i].speaker is not None for i in matches):
+        labelled = [i for i in matches if transcript.segments[i].speaker is not None]
+        if labelled:
             # Te same słowa mogą paść kilka razy (np. prowadzący powtarza słowa gościa):
             # wystarczy, że deklarowany mówca jest jednym z mówiących je w nagraniu.
             agreed = [
-                i for i in matches if any(_same_speaker(q.speaker, transcript.segments[i].speaker) for q in candidates)
+                i for i in matches if any(_speaker_agrees(q.speaker, transcript.segments[i].speaker) for q in candidates)
             ]
             is_declared = bool(agreed)
-            index = agreed[0] if agreed else index
+            # W ostrzeżeniu podajemy rozpoznanego mówcę – "None" nie dałoby się zadeklarować.
+            index = agreed[0] if agreed else labelled[0]
         speaker = transcript.segments[index].speaker if index is not None else None
         checks.append(
             InlineQuoteCheck(
