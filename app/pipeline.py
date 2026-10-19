@@ -88,7 +88,7 @@ def write(engine: Engine, request: DraftRequest) -> DraftResult:
     report = verify_draft(draft, transcript)
     # Model językowy poprawia też wyraźne odstępstwa od formatu; regułowy silnik
     # nie umie przeredagować tekstu, więc dla niego poprawka dotyczy tylko błędów.
-    problems = report.problems() + (report.format_warnings if engine.external else [])
+    problems = report.problems() + report.attribution_warnings + (report.format_warnings if engine.external else [])
     if not problems:
         return DraftResult(draft=draft, report=report, repaired=False, first_report=report)
 
@@ -96,7 +96,7 @@ def write(engine: Engine, request: DraftRequest) -> DraftResult:
     repaired = fix_quote_timecodes(engine.repair_draft(request, draft, problems), transcript)
     repaired_report = verify_draft(repaired, transcript)
     # Poprawka samego formatu nie może zepsuć poprawnych cytatów – wtedy zostaje pierwsza wersja.
-    if report.ok and not repaired_report.ok:
+    if (report.ok and not repaired_report.ok) or (report.strict_ok and not repaired_report.strict_ok):
         return DraftResult(draft=draft, report=report, repaired=False, first_report=report)
     return DraftResult(draft=repaired, report=repaired_report, repaired=True, first_report=report)
 

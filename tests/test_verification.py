@@ -169,3 +169,54 @@ def test_repair_that_breaks_quotes_keeps_original(transcript):
     request = DraftRequest(material=material, evidence=pipeline.analyze(engine, material), mode="FULL")
     result = pipeline.write(engine, request)
     assert result.report.ok and not result.repaired
+
+
+def test_dash_quotes_hardened():
+    from app.verification import dash_quotes
+
+    # druga wypowiedź od cyfry po zdaniu narracji
+    assert dash_quotes("- Prawdziwy cytat tutaj - mówi Jan. - 500 złotych to za mało.") == [
+        "Prawdziwy cytat tutaj",
+        "500 złotych to za mało.",
+    ]
+    # fragment po myślniku bez czasownika mówienia należy do cytatu
+    assert dash_quotes("- Prawdziwy cytat - a potem wymyślona reszta.") == ["Prawdziwy cytat - a potem wymyślona reszta."]
+    assert dash_quotes("- Płacimy - dodatkowo za wszystko - mówi.") == ["Płacimy - dodatkowo za wszystko"]
+    # myślnik w nowej linii akapitu i bez spacji
+    assert dash_quotes("Narracja.\n- Wymyślony cytat - mówi Jan.") == ["Wymyślony cytat"]
+    assert dash_quotes("-Bez spacji po myślniku - mówi Jan.") == ["Bez spacji po myślniku"]
+    # narracja po przypisaniu z cytatem w cudzysłowie i dalszym myślnikiem
+    assert dash_quotes("- Cytat - mówiła jedna z osób. „Hasło” - skandowali.") == ["Cytat"]
+
+
+def test_quoted_heading_is_checked(draft, transcript):
+    from app.models import Section
+
+    draft.sections.append(Section(heading="„Rząd kłamie w sprawie podatków”", paragraphs=["Tekst."]))
+    assert not verify_draft(draft, transcript).ok
+
+
+def test_straight_quote_inside_polish_quote(draft, transcript):
+    draft.lead = 'Tekst „Rząd nas okłamał, "Kowalski" mówił to wiele razy” koniec.'
+    assert not verify_draft(draft, transcript).ok
+
+
+def test_fragmented_ellipsis_is_rejected(transcript):
+    q = Quote(text="Oddaję … automat … sklepie … domu", speaker="Przechodzień 1", timecode_seconds=12)
+    check = check_quote(q, transcript)
+    assert check.status == QuoteStatus.NOT_FOUND and "rozdrobniony" in check.message
+
+
+def test_undeclared_inline_quote_gives_attribution_warning(draft, transcript):
+    draft.sections[0].paragraphs.append("- Słyszałam, że w zeszłym miesiącu oddano miliard butelek - mówi rozmówczyni.")
+    report = verify_draft(draft, transcript)
+    assert report.ok and not report.strict_ok
+    assert "Przechodzieńka 3" in report.attribution_warnings[0]
+    draft.quotes.append(Quote(text="Słyszałam, że w zeszłym miesiącu oddano miliard butelek", speaker="Przechodzieńka 3", timecode_seconds=44))
+    assert verify_draft(draft, transcript).strict_ok
+
+
+def test_inline_quote_declared_with_wrong_speaker_warns(draft, transcript):
+    draft.quotes[0] = draft.quotes[0].model_copy(update={"speaker": "Przechodzień 2"})
+    report = verify_draft(draft, transcript)
+    assert report.attribution_warnings

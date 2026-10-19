@@ -23,11 +23,9 @@ class MaterialDeleted(Exception):
 
 
 def _update(store: Store, material_id: str, **fields) -> Material:
-    material = store.get(Material, material_id)
-    if material is None:
+    updated = store.update(Material, material_id, **fields)
+    if updated is None:
         raise MaterialDeleted(material_id)
-    updated = material.model_copy(update=fields)
-    store.save(updated)
     return updated
 
 
@@ -47,13 +45,11 @@ def run_auto_job(
         _update(store, material_id, job_stage=value.value)
 
     try:
-        notes: list[str] = []
         if source is not None:
             if transcriber is None:
                 raise RuntimeError("Transkrypcja nagrań jest niedostępna")
             workdir = media_dir / material_id
             transcription = auto.transcribe_and_label(engine, transcriber, source, options.title, workdir, stage)
-            notes = transcription.notes
             media = transcription.media
             # Plik WAV dla ASR jest pośredni; zostawiamy tylko oryginał do odtwarzania.
             (workdir / "audio.wav").unlink(missing_ok=True)
@@ -61,6 +57,7 @@ def run_auto_job(
             fields = {
                 "transcript_raw": transcription.transcript_raw,
                 "transcript_has_speakers": transcription.has_speakers,
+                "transcript_notes": transcription.notes,
                 "video_url": media.public_url or "",
                 "media_file": str(media.path.relative_to(media_dir)) if media.path.is_relative_to(media_dir) else None,
             }
@@ -79,9 +76,12 @@ def run_auto_job(
             topic=material.topic,
             angle=material.angle,
         )
-        evidence, mode, result = auto.write_from_transcript(engine, material_input, options, notes, stage)
+        evidence, mode, result = auto.write_from_transcript(
+            engine, material_input, options, material.transcript_notes, stage
+        )
 
-        approved = auto_approve and result.report.ok
+        # Automat zatwierdza tylko draft bez żadnych wątpliwości co do cytatów i ich mówców.
+        approved = auto_approve and result.report.strict_ok
         fields = {
             "evidence": evidence,
             "mode": mode,

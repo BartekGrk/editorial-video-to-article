@@ -223,10 +223,12 @@ def create_app(
 
         `explicit`: wybór redaktora w tym żądaniu – "" oznacza świadomie "bez profilu",
         None – brak wyboru. Wtedy profil materiału (jeśli nadal istnieje), a w ostateczności
-        wbudowany profil WP Finanse. Usunięty profil materiału nie blokuje pracy.
+        wbudowany profil WP Finanse. Usunięty profil (np. zapamiętany do ponowienia) nie blokuje pracy.
         """
-        if explicit is not None:
-            return explicit or None
+        if explicit == "":
+            return None
+        if explicit and store.get(StyleProfileRecord, explicit):
+            return explicit
         if material_profile and store.get(StyleProfileRecord, material_profile):
             return material_profile
         return DEFAULT_STYLE_ID if store.get(StyleProfileRecord, DEFAULT_STYLE_ID) else None

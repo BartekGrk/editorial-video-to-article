@@ -277,8 +277,8 @@ async function renderForm(id) {
       <label for="angle">Kąt redakcyjny (opcjonalnie)</label>
       <input type="text" id="angle" value="${esc(m.angle)}" placeholder="np. koszty dla gospodarstw domowych">
       <label for="style">Profil stylu</label>
-      <select id="style"><option value="">— bez profilu —</option>
-        ${profiles.map((p) => `<option value="${esc(p.id)}" ${p.id === (id ? m.style_profile_id : DEFAULT_PROFILE) ? "selected" : ""}>${esc(p.name)}</option>`).join("")}
+      <select id="style"><option value="">— domyślny (WP Finanse) —</option>
+        ${profiles.filter((p) => p.id !== DEFAULT_PROFILE).map((p) => `<option value="${esc(p.id)}" ${p.id === m.style_profile_id ? "selected" : ""}>${esc(p.name)}</option>`).join("")}
       </select>
       <label for="transcript">Transkrypcja</label>
       <p class="small muted">Jedna wypowiedź na linię: <code>[00:01:23] Imię Nazwisko: treść</code> lub <code>[01:23] treść</code>. Linie bez znacznika czasu są doklejane do poprzedniej wypowiedzi.</p>
@@ -535,14 +535,22 @@ function formatBox(report) {
   return `<div class="verify warn"><strong>Format WP Finanse:</strong> odstępstwa do rozważenia (nie blokują eksportu).<ul>${warnings.map((w) => `<li>${esc(w)}</li>`).join("")}</ul></div>`;
 }
 
+function attributionBox(report) {
+  const warnings = report?.attribution_warnings || [];
+  if (!warnings.length) return "";
+  return `<div class="verify warn"><strong>Przypisanie cytatów:</strong> automat nie zatwierdza draftu, dopóki tego nie rozstrzygniesz.
+    <ul>${warnings.map((w) => `<li>${esc(w)}</li>`).join("")}</ul>
+    <button type="button" id="declare-quotes" class="small">Dodaj do listy cytatów z mówcą z nagrania</button></div>`;
+}
+
 function verificationBox(report) {
   if (!report) return "";
-  if (report.ok) return `<div class="verify ok"><strong>✓ Weryfikacja przeszła.</strong> Wszystkie cytaty występują w transkrypcji, tezy mają wskazane źródła.</div>${formatBox(report)}`;
+  if (report.ok) return `<div class="verify ok"><strong>✓ Weryfikacja przeszła.</strong> Wszystkie cytaty występują w transkrypcji, tezy mają wskazane źródła.</div>${attributionBox(report)}${formatBox(report)}`;
   const items = [];
   report.quotes.filter((q) => q.status !== "VERIFIED").forEach((q) => items.push(`Cytat „${esc(q.quote.text)}”: ${esc(q.message)}`));
   report.claims.forEach((c) => items.push(`Teza „${esc(c.statement)}”: ${esc(c.problems.join("; "))}`));
   report.inline_quotes.filter((q) => !q.verified).forEach((q) => items.push(`${esc(q.location)}: „${esc(q.text)}” nie występuje w transkrypcji`));
-  return `<div class="verify err"><strong>✗ Draft nie przeszedł weryfikacji.</strong> Popraw przed zatwierdzeniem i eksportem.<ul>${items.map((i) => `<li>${i}</li>`).join("")}</ul></div>${formatBox(report)}`;
+  return `<div class="verify err"><strong>✗ Draft nie przeszedł weryfikacji.</strong> Popraw przed zatwierdzeniem i eksportem.<ul>${items.map((i) => `<li>${i}</li>`).join("")}</ul></div>${attributionBox(report)}${formatBox(report)}`;
 }
 
 function drawDraft(root) {
@@ -622,6 +630,17 @@ function drawDraft(root) {
     toast("Draft zatwierdzony");
   }));
   form.querySelector("#to-export").addEventListener("click", () => { state.tab = "export"; drawWorkspace(); });
+  root.querySelector("#declare-quotes")?.addEventListener("click", (e) => {
+    // Redaktor potwierdza, że cytat należy do mówcy wskazanego przez transkrypcję.
+    const draft = readDraft(form);
+    for (const q of m.report.inline_quotes.filter((c) => c.verified && !c.declared)) {
+      draft.quotes.push({ text: q.text, speaker: q.speaker, timecode_seconds: q.found_at_seconds });
+    }
+    busy(e.target, "Zapisywanie…", async () => {
+      state.material = await api(`/api/materials/${m.id}/draft`, { method: "PUT", body: draft });
+      drawWorkspace();
+    });
+  });
   bindGoto(root);
   bindGenerator(root);
 }

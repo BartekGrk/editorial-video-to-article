@@ -63,6 +63,9 @@ class Material(BaseModel):
     job_error: str | None = None
     # Tytuł nadany automatycznie (z nazwy pliku/nagrania) zastępujemy pierwszą propozycją z draftu.
     title_auto: bool = False
+    # Zastrzeżenia z transkrypcji automatycznej (np. mówcy przypisani przez model) – trafiają
+    # do luk materiału dowodowego także przy ponownym generowaniu.
+    transcript_notes: list[str] = []
     auto_settings: AutoSettings | None = None
     # Zgoda na wysłanie treści do zewnętrznego API: materiał publiczny,
     # syntetyczny albo dopuszczony polityką redakcji.
@@ -123,6 +126,26 @@ class Store:
         with self._lock:
             rows = self._conn.execute(f"SELECT data FROM {_TABLES[model]} ORDER BY updated_at DESC").fetchall()
         return [model.model_validate_json(r[0]) for r in rows]
+
+    def update(self, model: type[T], record_id: str, **fields) -> T | None:
+        """Atomowy odczyt i zapis zmienionych pól; None, gdy rekordu już nie ma.
+
+        Osobne get + save pozwalałyby zadaniu w tle "wskrzesić" rekord usunięty
+        przez redaktora między odczytem a zapisem.
+        """
+        table = _TABLES[model]
+        with self._lock, self._conn:
+            row = self._conn.execute(f"SELECT data FROM {table} WHERE id = ?", (record_id,)).fetchone()
+            if row is None:
+                return None
+            record = model.model_validate_json(row[0]).model_copy(update=fields)
+            if isinstance(record, Material):
+                record.updated_at = _now()
+            self._conn.execute(
+                f"UPDATE {table} SET data = ?, updated_at = ? WHERE id = ?",
+                (record.model_dump_json(), _now(), record_id),
+            )
+        return record
 
     def delete(self, model: type[BaseModel], record_id: str) -> bool:
         with self._lock, self._conn:

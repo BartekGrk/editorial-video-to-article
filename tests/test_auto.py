@@ -306,3 +306,39 @@ def test_approve_blocked_while_processing(raw_transcript):
     material = Material(title="x", transcript_raw=raw_transcript, status=MaterialStatus.PROCESSING)
     store.save(material)
     assert client.post(f"/api/materials/{material.id}/approve").status_code == 409
+
+
+def test_store_update_does_not_resurrect_deleted(raw_transcript):
+    store = Store(":memory:")
+    material = Material(title="x", transcript_raw=raw_transcript)
+    store.save(material)
+    store.delete(Material, material.id)
+    assert store.update(Material, material.id, job_stage="TRANSCRIBING") is None
+    assert store.list(Material) == []
+
+
+@needs_ffmpeg
+def test_transcript_notes_survive_regeneration(auto_client):
+    client = auto_client()
+    mid = client.post("/api/auto", files={"file": ("a.wav", _wav_bytes(), "audio/wav")}).json()["id"]
+    notes = client.get(f"/api/materials/{mid}").json()["transcript_notes"]
+    assert notes and "bez rozróżnienia mówców" in notes[0]
+    client.post(f"/api/materials/{mid}/auto", json={})
+    gaps = client.get(f"/api/materials/{mid}").json()["evidence"]["gaps"]
+    assert notes[0] in gaps
+
+
+def test_retry_with_deleted_profile_falls_back(auto_client, raw_transcript):
+    client = auto_client()
+    store = client.app.state.store
+    from app.store import AutoSettings
+
+    material = Material(
+        title="x",
+        transcript_raw=raw_transcript,
+        status=MaterialStatus.FAILED,
+        auto_settings=AutoSettings(style_profile_id="usuniety-profil"),
+    )
+    store.save(material)
+    assert client.post(f"/api/materials/{material.id}/retry").status_code == 202
+    assert client.get(f"/api/materials/{material.id}").json()["style_profile_id"] == "wp-finanse"
