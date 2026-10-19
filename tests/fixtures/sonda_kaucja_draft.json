@@ -1,0 +1,30 @@
+{
+  "mode": "SHORT",
+  "title_options": [
+    "Butelki do automatu? Przechodnie podzieleni",
+    "„Za trzydzieści groszy nie będę stać w kolejce”. Sonda o kaucji"
+  ],
+  "lead": "Jedni chwalą automaty w osiedlowych sklepach, inni uważają, że kaucja jest za niska, żeby tracić czas.",
+  "sections": [
+    {
+      "heading": null,
+      "paragraphs": [
+        "Część rozmówców oddaje opakowania regularnie. „Oddaję, bo automat jest w sklepie obok domu” — mówi jeden z nich.",
+        "Nie wszyscy są przekonani: „Za te trzydzieści groszy nie będę stać w kolejce”."
+      ]
+    }
+  ],
+  "quotes": [
+    {"text": "Oddaję, bo automat jest w sklepie obok domu", "speaker": "Przechodzień 1", "timecode_seconds": 12},
+    {"text": "Za te trzydzieści groszy nie będę stać w kolejce", "speaker": "Przechodzień 2", "timecode_seconds": 31}
+  ],
+  "claims": [
+    {
+      "statement": "W zeszłym miesiącu oddano miliard butelek",
+      "evidence_timecodes": [44],
+      "requires_verification": true,
+      "note": "Relacja rozmówczyni, nie potwierdzony fakt"
+    }
+  ],
+  "editor_notes": ["Sprawdzić w nagraniu, czy automat widoczny w kadrze to ten sam sklep."]
+}
