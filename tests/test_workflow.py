@@ -122,3 +122,12 @@ def test_index_page_is_served(client):
 
 def test_config_reports_engine(client):
     assert client.get("/api/config").json()["engine"] == "heuristic"
+
+
+def test_demo_draft_passes_verification_for_long_title(client, raw_transcript):
+    # Regresja: tytuł materiału w cudzysłowie w leadzie był traktowany jak zmyślony cytat.
+    mid = client.post(
+        "/api/materials", json={"title": "Sonda: czy oddajemy butelki w systemie kaucyjnym?", "transcript_raw": raw_transcript}
+    ).json()["id"]
+    for mode in ("SHORT", "FULL"):
+        assert client.post(f"/api/materials/{mid}/draft", json={"mode": mode}).json()["material"]["report"]["ok"]

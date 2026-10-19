@@ -95,7 +95,8 @@ class HeuristicEngine:
 
         return EvidencePack(
             summary=(
-                f"Materiał „{material.title}”: {speakers} rozmówców, {len(segments)} segmentów, "
+                # Bez cudzysłowu: weryfikator traktuje tekst w „…” jako cytat.
+                f"{material.title.rstrip('.?!:')}: {speakers} rozmówców, {len(segments)} segmentów, "
                 f"około {guest_words} słów wypowiedzi."
             ),
             threads=threads,
