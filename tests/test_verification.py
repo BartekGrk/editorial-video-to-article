@@ -58,3 +58,27 @@ def test_claim_without_evidence_fails(draft, transcript):
 def test_claim_with_timecode_outside_transcript_fails(draft, transcript):
     draft.claims[0].evidence_timecodes = [3600]
     assert not verify_draft(draft, transcript).ok
+
+
+def test_inline_quote_in_paragraph_is_checked(draft, transcript):
+    draft.sections[0].paragraphs.append("Ktoś dodał: „Kaucja to najgorszy pomysł tego rządu”.")
+    report = verify_draft(draft, transcript)
+    assert not report.ok
+    assert [q.text for q in report.inline_quotes if not q.verified] == ["Kaucja to najgorszy pomysł tego rządu"]
+
+
+def test_inline_quote_in_title_must_be_exact(draft, transcript):
+    draft.title_options[1] = "„Za trzydzieści groszy nie będę stać w kolejce”. Sonda"
+    assert not verify_draft(draft, transcript).ok
+
+
+def test_short_quoted_names_are_not_treated_as_quotes(draft, transcript):
+    draft.lead = "Program „Czyste Powietrze” nie dotyczy kaucji."
+    assert verify_draft(draft, transcript).ok
+
+
+def test_problems_lists_all_failures(draft, transcript):
+    draft.quotes.append(Quote(text="Nie ma tego", speaker="X", timecode_seconds=5))
+    draft.claims.append(Claim(statement="Bez źródła"))
+    problems = verify_draft(draft, transcript).problems()
+    assert len(problems) == 2

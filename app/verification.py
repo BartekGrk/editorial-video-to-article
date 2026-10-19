@@ -18,6 +18,12 @@ from app.transcript import format_timecode
 _ELLIPSIS = re.compile(r"\[\s*(?:\.\.\.|…)\s*\]|\.\.\.|…")
 _NON_WORD = re.compile(r"[^\w]+", re.UNICODE)
 
+# Cudzysłowy w tekście: polskie „…”, angielskie “…” i proste "…".
+_INLINE_QUOTE = re.compile(r"„([^”\"]+)[”\"]|“([^”]+)”|\"([^\"]+)\"")
+# Krótkie frazy w cudzysłowie to zwykle nazwy własne (programy, ustawy),
+# a nie cytaty; sprawdzamy tylko wypowiedzi od 4 słów.
+_MIN_INLINE_QUOTE_WORDS = 4
+
 # Cytat może przechodzić na kolejną linię tej samej wypowiedzi;
 # szersze okno zwiększałoby ryzyko "sklejenia" cytatu z odległych zdań.
 _MAX_FOLLOWING_SEGMENTS = 2
@@ -43,14 +49,43 @@ class ClaimCheck(BaseModel):
     problems: list[str]
 
 
+class InlineQuoteCheck(BaseModel):
+    """Cytat w cudzysłowie wpleciony w tytuł, lead lub akapit."""
+
+    location: str
+    text: str
+    found_at_seconds: int | None = None
+    verified: bool
+
+
 class VerificationReport(BaseModel):
     quotes: list[QuoteCheck]
     claims: list[ClaimCheck]
+    inline_quotes: list[InlineQuoteCheck] = []
 
     @computed_field
     @property
     def ok(self) -> bool:
-        return all(q.status == QuoteStatus.VERIFIED for q in self.quotes) and not self.claims
+        return (
+            all(q.status == QuoteStatus.VERIFIED for q in self.quotes)
+            and not self.claims
+            and all(q.verified for q in self.inline_quotes)
+        )
+
+    def problems(self) -> list[str]:
+        """Czytelna lista błędów, np. do poprawki draftu przez model."""
+        lines = [
+            f"Cytat „{q.quote.text}” ({q.status.value}): {q.message}"
+            for q in self.quotes
+            if q.status != QuoteStatus.VERIFIED
+        ]
+        lines += [f"Teza „{c.statement}”: {'; '.join(c.problems)}" for c in self.claims]
+        lines += [
+            f"Cytat w tekście ({q.location}) „{q.text}” nie występuje w transkrypcji"
+            for q in self.inline_quotes
+            if not q.verified
+        ]
+        return lines
 
 
 def normalize(text: str) -> str:
@@ -73,7 +108,7 @@ def _contains_in_order(haystack: str, fragments: list[str]) -> bool:
     return True
 
 
-def _segment_at(transcript: Transcript, seconds: int) -> int | None:
+def segment_at(transcript: Transcript, seconds: int) -> int | None:
     """Indeks segmentu obejmującego dany moment (ostatni z początkiem <= seconds)."""
     index = None
     for i, segment in enumerate(transcript.segments):
@@ -104,7 +139,7 @@ def check_quote(quote: Quote, transcript: Transcript) -> QuoteCheck:
         return QuoteCheck(quote=quote, status=QuoteStatus.NOT_FOUND, message="Pusty cytat")
 
     segments = transcript.segments
-    cited = _segment_at(transcript, quote.timecode_seconds)
+    cited = segment_at(transcript, quote.timecode_seconds)
     if cited is not None and _contains_in_order(_window_text(segments, cited), fragments):
         segment = segments[cited]
         if segment.speaker is None or _same_speaker(quote.speaker, segment.speaker):
@@ -140,6 +175,47 @@ def check_quote(quote: Quote, transcript: Transcript) -> QuoteCheck:
     )
 
 
+def find_quote(text: str, transcript: Transcript) -> int | None:
+    """Indeks pierwszego segmentu, od którego zaczyna się cytat (bez względu na mówcę)."""
+    fragments = _fragments(text)
+    if not fragments:
+        return None
+    for i in range(len(transcript.segments)):
+        if _contains_in_order(_window_text(transcript.segments, i), fragments):
+            return i
+    return None
+
+
+def extract_inline_quotes(draft: ArticleDraft) -> list[tuple[str, str]]:
+    """Pary (miejsce, cytat) dla wypowiedzi w cudzysłowie w tekście draftu."""
+    places = [(f"tytuł {i}", t) for i, t in enumerate(draft.title_options, start=1)]
+    places.append(("lead", draft.lead))
+    for s_no, section in enumerate(draft.sections, start=1):
+        places += [(f"sekcja {s_no}, akapit {p_no}", p) for p_no, p in enumerate(section.paragraphs, start=1)]
+    found = []
+    for location, text in places:
+        for match in _INLINE_QUOTE.finditer(text):
+            quoted = next(g for g in match.groups() if g is not None).strip()
+            if len(normalize(quoted).split()) >= _MIN_INLINE_QUOTE_WORDS:
+                found.append((location, quoted))
+    return found
+
+
+def check_inline_quotes(draft: ArticleDraft, transcript: Transcript) -> list[InlineQuoteCheck]:
+    checks = []
+    for location, text in extract_inline_quotes(draft):
+        index = find_quote(text, transcript)
+        checks.append(
+            InlineQuoteCheck(
+                location=location,
+                text=text,
+                verified=index is not None,
+                found_at_seconds=None if index is None else transcript.segments[index].start_seconds,
+            )
+        )
+    return checks
+
+
 def verify_draft(draft: ArticleDraft, transcript: Transcript) -> VerificationReport:
     end = transcript.segments[-1].start_seconds
     claim_checks: list[ClaimCheck] = []
@@ -152,7 +228,7 @@ def verify_draft(draft: ArticleDraft, transcript: Transcript) -> VerificationRep
         problems += [
             f"Timecode {format_timecode(t)} poza zakresem transkrypcji"
             for t in claim.evidence_timecodes
-            if _segment_at(transcript, t) is None or t > end + 60
+            if segment_at(transcript, t) is None or t > end + 60
         ]
         if problems:
             claim_checks.append(
@@ -162,4 +238,5 @@ def verify_draft(draft: ArticleDraft, transcript: Transcript) -> VerificationRep
     return VerificationReport(
         quotes=[check_quote(q, transcript) for q in draft.quotes],
         claims=claim_checks,
+        inline_quotes=check_inline_quotes(draft, transcript),
     )
