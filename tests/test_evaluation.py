@@ -24,3 +24,11 @@ def test_draft_words_include_lead(draft):
 
     draft.sections = []
     assert draft_words(draft) > 0
+
+
+def test_word_error_rate():
+    from app.evaluation import word_error_rate
+
+    assert word_error_rate("Ala ma kota.", "ala ma kota") == 0
+    assert word_error_rate("ala ma kota", "ala ma psa") == 1 / 3
+    assert word_error_rate("ala ma kota", "ala kota") == 1 / 3

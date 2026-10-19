@@ -12,13 +12,16 @@ w raporcie – automatyczne metryki jej nie zastępują.
 """
 
 import json
+import tempfile
 import time
 from dataclasses import dataclass
 from pathlib import Path
 
-from app import pipeline
+from app import auto, pipeline
+from app.media import Transcriber
+from app.store import STYLES_DIR
 from app.engines import DraftRequest, Engine, MaterialInput
-from app.models import ArticleDraft, ArticleMode
+from app.models import ArticleDraft, ArticleMode, EditorialStyleProfile
 from app.transcript import parse_transcript
 from app.verification import QuoteStatus, VerificationReport, normalize
 
@@ -41,6 +44,7 @@ class CaseResult:
     title_words: int
     lead_words: int
     format_warnings: int
+    asr_wer: float | None = None
 
 
 def _words(text: str) -> int:
@@ -56,21 +60,69 @@ def _verified(report: VerificationReport) -> int:
     return sum(q.status == QuoteStatus.VERIFIED for q in report.quotes)
 
 
-def run_case(engine: Engine, transcript_path: Path) -> CaseResult:
+MEDIA_SUFFIXES = (".wav", ".mp3", ".m4a", ".mp4", ".ogg", ".webm")
+
+
+def word_error_rate(reference: str, hypothesis: str) -> float:
+    """WER na słowach po normalizacji (bez wielkości liter i interpunkcji)."""
+    ref, hyp = normalize(reference).split(), normalize(hypothesis).split()
+    if not ref:
+        return 0.0 if not hyp else 1.0
+    previous = list(range(len(hyp) + 1))
+    for i, ref_word in enumerate(ref, start=1):
+        current = [i] + [0] * len(hyp)
+        for j, hyp_word in enumerate(hyp, start=1):
+            current[j] = min(previous[j] + 1, current[j - 1] + 1, previous[j - 1] + (ref_word != hyp_word))
+        previous = current
+    return previous[-1] / len(ref)
+
+
+def _media_for(transcript_path: Path) -> Path | None:
+    return next((p for p in (transcript_path.with_suffix(s) for s in MEDIA_SUFFIXES) if p.exists()), None)
+
+
+def default_style() -> EditorialStyleProfile:
+    data = json.loads((STYLES_DIR / "wp_finanse.json").read_text(encoding="utf-8"))
+    return EditorialStyleProfile.model_validate(data["profile"])
+
+
+def run_case(
+    engine: Engine,
+    transcript_path: Path,
+    style: EditorialStyleProfile | None = None,
+    transcriber: Transcriber | None = None,
+) -> CaseResult:
+    """Ocena jednego przypadku; z `transcriber` i plikiem nagrania – od dźwięku (z ASR)."""
     meta_path, ref_path = transcript_path.with_suffix(".json"), transcript_path.with_suffix(".md")
     meta = json.loads(meta_path.read_text(encoding="utf-8")) if meta_path.exists() else {}
+    title = meta.get("title", transcript_path.stem)
+    reference_raw = transcript_path.read_text(encoding="utf-8")
+
+    started = time.perf_counter()
+    wer = None
+    media = _media_for(transcript_path) if transcriber else None
+    if media is not None:
+        with tempfile.TemporaryDirectory() as tmp:
+            transcription = auto.transcribe_and_label(engine, transcriber, str(media), title, Path(tmp))
+        transcript = parse_transcript(transcription.transcript_raw, with_speakers=transcription.has_speakers)
+        reference = parse_transcript(reference_raw)
+        wer = word_error_rate(
+            " ".join(s.text for s in reference.segments), " ".join(s.text for s in transcript.segments)
+        )
+    else:
+        transcript = parse_transcript(reference_raw)
+
     material = MaterialInput(
-        title=meta.get("title", transcript_path.stem),
-        transcript=parse_transcript(transcript_path.read_text(encoding="utf-8")),
+        title=title,
+        transcript=transcript,
         category=meta.get("category", ""),
         topic=meta.get("topic", ""),
         angle=meta.get("angle", ""),
     )
-
-    started = time.perf_counter()
     evidence = pipeline.analyze(engine, material)
     mode = ArticleMode(meta["mode"]) if "mode" in meta else evidence.suggested_mode
-    result = pipeline.write(engine, DraftRequest(material=material, evidence=evidence, mode=mode))
+    request = DraftRequest(material=material, evidence=evidence, mode=mode, style=style or default_style())
+    result = pipeline.write(engine, request)
     elapsed = time.perf_counter() - started
 
     first, draft = result.first_report, result.draft
@@ -91,11 +143,12 @@ def run_case(engine: Engine, transcript_path: Path) -> CaseResult:
         title_words=_words(draft.title_options[0]),
         lead_words=_words(draft.lead),
         format_warnings=len(result.report.format_warnings),
+        asr_wer=None if wer is None else round(wer, 3),
     )
 
 
-def run_directory(engine: Engine, directory: Path) -> list[CaseResult]:
-    return [run_case(engine, path) for path in sorted(directory.glob("*.txt"))]
+def run_directory(engine: Engine, directory: Path, transcriber: Transcriber | None = None) -> list[CaseResult]:
+    return [run_case(engine, path, transcriber=transcriber) for path in sorted(directory.glob("*.txt"))]
 
 
 def report_markdown(results: list[CaseResult], engine_name: str) -> str:
@@ -103,8 +156,8 @@ def report_markdown(results: list[CaseResult], engine_name: str) -> str:
         f"# Raport ewaluacji ({engine_name})",
         "",
         "| Przypadek | Tryb | Czas [s] | Cytaty OK (1. wersja) | Cytaty w tekście błędne (1. wersja) | Poprawka | Wynik końcowy | "
-        "Tezy / do weryf. / bez źródła | Słowa draft / ref. | Uwagi do formatu |",
-        "| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |",
+        "Tezy / do weryf. / bez źródła | Słowa draft / ref. | Uwagi do formatu | WER ASR |",
+        "| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |",
     ]
     for r in results:
         ref = r.reference_words if r.reference_words is not None else "–"
@@ -112,7 +165,7 @@ def report_markdown(results: list[CaseResult], engine_name: str) -> str:
             f"| {r.name} | {r.mode.value} | {r.seconds} | {r.quotes_verified_first}/{r.quotes_total} | "
             f"{r.inline_failed_first} | {'tak' if r.repaired else 'nie'} | {'OK' if r.final_ok else 'BŁĘDY'} | "
             f"{r.claims_total} / {r.claims_flagged} / {r.claims_without_source} | {r.draft_words} / {ref} | "
-            f"{r.format_warnings} |"
+            f"{r.format_warnings} | {'–' if r.asr_wer is None else f'{r.asr_wer:.1%}'} |"
         )
 
     if results:
