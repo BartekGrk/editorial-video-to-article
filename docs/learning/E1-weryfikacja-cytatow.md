@@ -31,7 +31,7 @@ Przepływ: `POST /drafts/render` → `_parse` (parser) → `verify_draft` → dl
 python -m pytest -q
 ```
 
-Oczekiwany wynik: `25 passed`.
+Oczekiwany wynik: wszystkie testy przechodzą (`passed`, bez `failed`).
 
 ## Ćwiczenie: przewidź → zmień → uruchom → wyjaśnij
 
