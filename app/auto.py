@@ -35,6 +35,7 @@ StageCallback = Callable[[Stage], None]
 
 # Etykieta musi przejść przez parser `Mówca: treść`, więc nie może zawierać dwukropka.
 _MAX_SPEAKER_LENGTH = 60
+UNKNOWN_SPEAKER = "Mówca nieustalony"
 # Poniżej tego pokrycia etykiety są zbyt dziurawe, żeby na nich polegać.
 _MIN_LABEL_COVERAGE = 0.8
 
@@ -97,7 +98,9 @@ def label_speakers(engine: Engine, title: str, segments: list[TranscriptSegment]
     if len(by_index) < _MIN_LABEL_COVERAGE * len(segments):
         return segments, False, ["Model nie przypisał mówców do większości wypowiedzi – sprawdź je ręcznie."]
 
-    labelled = [s.model_copy(update={"speaker": by_index.get(i)}) for i, s in enumerate(segments)]
+    # Każdy segment musi mieć etykietę: w transkrypcji z mówcami linia bez etykiety
+    # z dwukropkiem w treści ("Pytanie brzmi: …") zostałaby odczytana jako mówca.
+    labelled = [s.model_copy(update={"speaker": by_index.get(i, UNKNOWN_SPEAKER)}) for i, s in enumerate(segments)]
     notes = ["Mówcy przypisani automatycznie na podstawie treści – sprawdź nazwiska i funkcje z nagraniem."]
     uncertain = sorted({i for i in labels.uncertain_indices if 0 <= i < len(segments)})
     if uncertain:

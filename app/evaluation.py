@@ -23,7 +23,7 @@ from app.store import STYLES_DIR
 from app.engines import DraftRequest, Engine, MaterialInput
 from app.models import ArticleDraft, ArticleMode, EditorialStyleProfile
 from app.transcript import parse_transcript
-from app.verification import QuoteStatus, VerificationReport, normalize
+from app.verification import QuoteStatus, VerificationReport, normalize, word_count
 
 
 @dataclass
@@ -47,13 +47,10 @@ class CaseResult:
     asr_wer: float | None = None
 
 
-def _words(text: str) -> int:
-    return len(normalize(text).split())
-
 
 def draft_words(draft: ArticleDraft) -> int:
     """Lead + treść – w trybie SHORT cały tekst jest w leadzie."""
-    return _words(draft.lead) + sum(_words(p) for s in draft.sections for p in s.paragraphs)
+    return word_count(draft.lead) + sum(word_count(p) for s in draft.sections for p in s.paragraphs)
 
 
 def _verified(report: VerificationReport) -> int:
@@ -139,9 +136,9 @@ def run_case(
         claims_flagged=sum(c.requires_verification for c in draft.claims),
         claims_without_source=len(result.report.claims),
         draft_words=draft_words(draft),
-        reference_words=_words(ref_path.read_text(encoding="utf-8")) if ref_path.exists() else None,
-        title_words=_words(draft.title_options[0]),
-        lead_words=_words(draft.lead),
+        reference_words=word_count(ref_path.read_text(encoding="utf-8")) if ref_path.exists() else None,
+        title_words=word_count(draft.title_options[0]),
+        lead_words=word_count(draft.lead),
         format_warnings=len(result.report.format_warnings),
         asr_wer=None if wer is None else round(wer, 3),
     )

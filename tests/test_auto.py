@@ -228,3 +228,81 @@ def test_retry_without_media_is_rejected(auto_client):
     material = Material(title="x", status=MaterialStatus.FAILED, source="nagranie.mp4")
     store.save(material)
     assert client.post(f"/api/materials/{material.id}/retry").status_code == 409
+
+
+@needs_ffmpeg
+def test_retry_keeps_original_options(tmp_path):
+    class FailingOnce(HeuristicEngine):
+        calls = 0
+
+        def extract_evidence(self, material):
+            FailingOnce.calls += 1
+            if FailingOnce.calls == 1:
+                raise RuntimeError("chwilowy błąd modelu")
+            return super().extract_evidence(material)
+
+    client = TestClient(create_app(Store(":memory:"), FailingOnce(), FakeTranscriber(), InlineRunner(), tmp_path))
+    mid = client.post(
+        "/api/auto", data={"auto_approve": "false", "mode": "FULL"}, files={"file": ("a.wav", _wav_bytes(), "audio/wav")}
+    ).json()["id"]
+    assert client.get(f"/api/materials/{mid}").json()["status"] == "FAILED"
+    client.post(f"/api/materials/{mid}/retry")
+    material = client.get(f"/api/materials/{mid}").json()
+    assert material["status"] == "DRAFTED" and material["mode"] == "FULL"
+
+
+def test_unexpected_index_error_marks_failed_and_keeps_media(tmp_path):
+    from app.workflow import run_auto_job
+
+    class Broken(HeuristicEngine):
+        def extract_evidence(self, material):
+            raise IndexError("błąd w kodzie")
+
+    store = Store(":memory:")
+    material = Material(title="x", transcript_raw="[00:01] A: Tekst wypowiedzi tutaj.", status=MaterialStatus.PROCESSING)
+    store.save(material)
+    (tmp_path / material.id).mkdir()
+    run_auto_job(store, Broken(), None, material.id, auto.AutoOptions(), True, tmp_path)
+    assert store.get(Material, material.id).status == MaterialStatus.FAILED
+    assert (tmp_path / material.id).exists()
+
+
+def test_partially_labelled_segments_get_placeholder_speaker():
+    labels = SpeakerLabels(labels=[SpeakerLabel(index=i, speaker="Reporter") for i in range(4)])
+    segments = _segments() + [TranscriptSegment(start_seconds=30, text="Pytanie brzmi: ile zapłacimy?")]
+    labelled, has_speakers, _ = auto.label_speakers(LabellingEngine(labels), "T", segments)
+    from app.transcript import build_transcript_raw, parse_transcript
+
+    reparsed = parse_transcript(build_transcript_raw(labelled), with_speakers=has_speakers)
+    assert reparsed.segments[-1].text == "Pytanie brzmi: ile zapłacimy?"
+    assert reparsed.segments[-1].speaker == auto.UNKNOWN_SPEAKER
+
+
+def test_manual_title_is_not_overwritten(auto_client, raw_transcript):
+    client = auto_client()
+    store = client.app.state.store
+    material = Material(title="upload", title_auto=True, transcript_raw=raw_transcript)
+    store.save(material)
+    client.put(f"/api/materials/{material.id}", json={"title": "Tytuł redaktora", "transcript_raw": raw_transcript})
+    client.post(f"/api/materials/{material.id}/auto", json={})
+    assert client.get(f"/api/materials/{material.id}").json()["title"] == "Tytuł redaktora"
+
+
+def test_deleted_style_profile_does_not_block_and_empty_means_none(client, raw_transcript):
+    pid = client.post("/api/style-profiles", json={"name": "P", "articles": ["T\n\nLead.\n\nAkapit."]}).json()["id"]
+    mid = client.post(
+        "/api/materials", json={"title": "x", "transcript_raw": raw_transcript, "style_profile_id": pid}
+    ).json()["id"]
+    client.delete(f"/api/style-profiles/{pid}")
+    drafted = client.post(f"/api/materials/{mid}/draft", json={"mode": "SHORT"}).json()["material"]
+    assert drafted["style_profile_id"] == "wp-finanse"
+    drafted = client.post(f"/api/materials/{mid}/draft", json={"mode": "SHORT", "style_profile_id": ""}).json()["material"]
+    assert drafted["style_profile_id"] is None
+
+
+def test_approve_blocked_while_processing(raw_transcript):
+    store = Store(":memory:")
+    client = TestClient(create_app(store, HeuristicEngine(), FakeTranscriber(), InlineRunner()))
+    material = Material(title="x", transcript_raw=raw_transcript, status=MaterialStatus.PROCESSING)
+    store.save(material)
+    assert client.post(f"/api/materials/{material.id}/approve").status_code == 409

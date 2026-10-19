@@ -37,6 +37,15 @@ class MaterialStatus(str, Enum):
     APPROVED = "APPROVED"
 
 
+class AutoSettings(BaseModel):
+    """Ustawienia ostatniego uruchomienia automatu – ponowienie po błędzie ich używa."""
+
+    mode: ArticleMode | None = None
+    style_profile_id: str | None = None
+    target_words: int | None = Field(default=None, ge=30, le=3000)
+    auto_approve: bool = True
+
+
 class Material(BaseModel):
     id: str = Field(default_factory=_new_id)
     title: str
@@ -54,6 +63,7 @@ class Material(BaseModel):
     job_error: str | None = None
     # Tytuł nadany automatycznie (z nazwy pliku/nagrania) zastępujemy pierwszą propozycją z draftu.
     title_auto: bool = False
+    auto_settings: AutoSettings | None = None
     # Zgoda na wysłanie treści do zewnętrznego API: materiał publiczny,
     # syntetyczny albo dopuszczony polityką redakcji.
     external_processing_allowed: bool = False

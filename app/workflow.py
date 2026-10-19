@@ -18,10 +18,14 @@ from app.transcript import parse_transcript
 log = logging.getLogger(__name__)
 
 
+class MaterialDeleted(Exception):
+    """Materiał usunięty w trakcie przetwarzania (osobny typ, żeby nie łapać innych KeyError/IndexError)."""
+
+
 def _update(store: Store, material_id: str, **fields) -> Material:
     material = store.get(Material, material_id)
     if material is None:
-        raise LookupError("Materiał został usunięty w trakcie przetwarzania")
+        raise MaterialDeleted(material_id)
     updated = material.model_copy(update=fields)
     store.save(updated)
     return updated
@@ -67,7 +71,7 @@ def run_auto_job(
 
         material = store.get(Material, material_id)
         if material is None:
-            raise LookupError("Materiał został usunięty w trakcie przetwarzania")
+            raise MaterialDeleted(material_id)
         material_input = MaterialInput(
             title=material.title,
             transcript=parse_transcript(material.transcript_raw, with_speakers=material.transcript_has_speakers),
@@ -91,7 +95,7 @@ def run_auto_job(
             fields["title"] = result.draft.title_options[0]
             fields["title_auto"] = False
         _update(store, material_id, **fields)
-    except LookupError:
+    except MaterialDeleted:
         log.info("Materiał %s usunięty w trakcie przetwarzania", material_id)
         # Usunięcie mogło nastąpić przed zapisem pobranego nagrania – sprzątamy po zadaniu.
         shutil.rmtree(media_dir / material_id, ignore_errors=True)
@@ -105,5 +109,5 @@ def run_auto_job(
                 job_stage=auto.Stage.FAILED.value,
                 job_error=str(error) or error.__class__.__name__,
             )
-        except LookupError:
+        except MaterialDeleted:
             pass

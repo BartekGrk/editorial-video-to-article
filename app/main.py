@@ -26,7 +26,7 @@ from app.workflow import run_auto_job
 from app.engines import DraftRequest, Engine, EngineError, MaterialInput, create_engine
 from app.models import ArticleDraft, ArticleMode, EditorialStyleProfile, Transcript
 from app.render import render_html, render_markdown
-from app.store import DEFAULT_STYLE_ID, Material, MaterialStatus, Store, StyleProfileRecord, seed_builtin_styles
+from app.store import DEFAULT_STYLE_ID, AutoSettings, Material, MaterialStatus, Store, StyleProfileRecord, seed_builtin_styles
 from app.transcript import TranscriptParseError, parse_transcript
 from app.verification import VerificationReport, verify_draft
 
@@ -65,11 +65,7 @@ class MaterialView(Material):
     transcript: Transcript | None
 
 
-class AutoRunOptions(BaseModel):
-    mode: ArticleMode | None = None
-    style_profile_id: str | None = None
-    target_words: int | None = Field(default=None, ge=30, le=3000)
-    auto_approve: bool = True
+AutoRunOptions = AutoSettings
 
 
 class DraftOptions(BaseModel):
@@ -222,11 +218,17 @@ def create_app(
             raise HTTPException(status_code=404, detail="Nie ma takiego profilu stylu")
         return record.profile
 
-    def resolve_style_id(store: Store, *candidates: str | None) -> str | None:
-        """Pierwszy wskazany profil, a gdy nie wskazano żadnego – wbudowany profil WP Finanse."""
-        for candidate in candidates:
-            if candidate:
-                return candidate
+    def resolve_style_id(store: Store, explicit: str | None, material_profile: str | None) -> str | None:
+        """Profil dla draftu.
+
+        `explicit`: wybór redaktora w tym żądaniu – "" oznacza świadomie "bez profilu",
+        None – brak wyboru. Wtedy profil materiału (jeśli nadal istnieje), a w ostateczności
+        wbudowany profil WP Finanse. Usunięty profil materiału nie blokuje pracy.
+        """
+        if explicit is not None:
+            return explicit or None
+        if material_profile and store.get(StyleProfileRecord, material_profile):
+            return material_profile
         return DEFAULT_STYLE_ID if store.get(StyleProfileRecord, DEFAULT_STYLE_ID) else None
 
     def start_auto_job(
@@ -250,6 +252,7 @@ def create_app(
                 "job_stage": auto.Stage.QUEUED.value,
                 "job_error": None,
                 "style_profile_id": profile_id,
+                "auto_settings": options.model_copy(update={"style_profile_id": profile_id or ""}),
             }
         )
         store.save(queued)
@@ -307,6 +310,9 @@ def create_app(
             or fields.transcript_has_speakers != material.transcript_has_speakers
         )
         updated = material.model_copy(update=fields.model_dump())
+        if fields.title != material.title:
+            # Tytuł nadany przez redaktora nie może zostać nadpisany przez automat.
+            updated.title_auto = False
         if transcript_changed:
             # Materiał dowodowy i draft odnoszą się do starej transkrypcji – nie można ich zachować.
             updated = updated.model_copy(
@@ -398,6 +404,7 @@ def create_app(
 
     @app.post("/api/materials/{material_id}/approve")
     def approve(material: Material = Depends(get_material), store: Store = Depends(get_store)) -> MaterialView:
+        _ensure_idle(material)
         if material.draft is None or material.report is None or not material.report.ok:
             raise HTTPException(status_code=409, detail="Zatwierdzić można tylko draft, który przeszedł weryfikację")
         updated = material.model_copy(update={"status": MaterialStatus.APPROVED})
@@ -519,8 +526,9 @@ def create_app(
         """Ponowienie automatu po błędzie: od transkrypcji, jeśli jej jeszcze nie ma."""
         _ensure_idle(material)
         _ensure_consent(request.app.state.engine, material)
+        options = material.auto_settings or AutoRunOptions()
         if material.transcript_raw.strip():
-            return _view(start_auto_job(request, material, AutoRunOptions()))
+            return _view(start_auto_job(request, material, options))
         media = request.app.state.media_dir / material.media_file if material.media_file else None
         if media is not None and media.is_file():
             source = str(media)
@@ -528,7 +536,7 @@ def create_app(
             source = material.source
         else:
             raise HTTPException(status_code=409, detail="Brak nagrania do ponownego przetworzenia")
-        return _view(start_auto_job(request, material, AutoRunOptions(), source))
+        return _view(start_auto_job(request, material, options, source))
 
     @app.get("/media/{material_id}", include_in_schema=False)
     def media(request: Request, material: Material = Depends(get_material)) -> FileResponse:

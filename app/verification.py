@@ -18,8 +18,8 @@ from app.transcript import format_timecode
 _ELLIPSIS = re.compile(r"\[\s*(?:\.\.\.|…)\s*\]|\.\.\.|…")
 _NON_WORD = re.compile(r"[^\w]+", re.UNICODE)
 
-# Cudzysłowy w tekście: polskie „…”, angielskie “…” i proste "…".
-_INLINE_QUOTE = re.compile(r"„([^”\"]+)[”\"]|“([^”]+)”|\"([^\"]+)\"")
+# Cudzysłowy: „…” i „…“ (polskie), “…” (angielskie), "…" (proste), »…« i «…».
+_INLINE_QUOTE = re.compile(r"„([^”“\"]+)[”“\"]|“([^”]+)”|\"([^\"]+)\"|»([^«]+)«|«([^»]+)»")
 # Krótkie frazy w cudzysłowie to zwykle nazwy własne (programy, ustawy),
 # a nie cytaty; sprawdzamy tylko wypowiedzi od 4 słów.
 _MIN_INLINE_QUOTE_WORDS = 4
@@ -95,6 +95,10 @@ class VerificationReport(BaseModel):
         return lines
 
 
+def word_count(text: str) -> int:
+    return len(normalize(text).split())
+
+
 def normalize(text: str) -> str:
     return " ".join(_NON_WORD.sub(" ", text.casefold()).split())
 
@@ -136,6 +140,14 @@ def _window_text(segments: list[TranscriptSegment], start: int) -> str:
     return normalize(" ".join(parts))
 
 
+def _windows(transcript: Transcript) -> list[str]:
+    """Okna dla wszystkich segmentów, liczone raz na transkrypcję (przy długich nagraniach
+    weryfikacja sprawdza dziesiątki cytatów na każdym zapisie)."""
+    if transcript._windows is None or len(transcript._windows) != len(transcript.segments):
+        transcript._windows = [_window_text(transcript.segments, i) for i in range(len(transcript.segments))]
+    return transcript._windows
+
+
 def _same_speaker(a: str | None, b: str | None) -> bool:
     return a is not None and b is not None and normalize(a) == normalize(b)
 
@@ -153,7 +165,8 @@ def check_quote(quote: Quote, transcript: Transcript) -> QuoteCheck:
         if cited is not None
         else []
     )
-    matches = [i for i in candidates if _contains_in_order(_window_text(segments, i), fragments)]
+    windows = _windows(transcript)
+    matches = [i for i in candidates if _contains_in_order(windows[i], fragments)]
     if matches:
         verified = [i for i in matches if segments[i].speaker is None or _same_speaker(quote.speaker, segments[i].speaker)]
         if verified:
@@ -174,7 +187,7 @@ def check_quote(quote: Quote, transcript: Transcript) -> QuoteCheck:
         )
 
     for i, segment in enumerate(segments):
-        if i not in candidates and _contains_in_order(_window_text(segments, i), fragments):
+        if i not in candidates and _contains_in_order(windows[i], fragments):
             return QuoteCheck(
                 quote=quote,
                 status=QuoteStatus.TIMECODE_MISMATCH,
@@ -199,7 +212,7 @@ def find_quote(text: str, transcript: Transcript) -> int | None:
     if not fragments:
         return None
     for i in range(len(transcript.segments)):
-        if _contains_in_order(_window_text(transcript.segments, i), fragments):
+        if _contains_in_order(_windows(transcript)[i], fragments):
             return i
     return None
 
@@ -207,17 +220,29 @@ def find_quote(text: str, transcript: Transcript) -> int | None:
 def dash_quotes(paragraph: str) -> list[str]:
     """Wypowiedzi z akapitu dialogowego "- cytat - mówi X. - Dalszy cytat."
 
-    Pierwszy fragment po myślniku to cytat. Kolejne fragmenty zaczynające się
-    małą literą to przypisanie ("mówi", "dodaje") i narracja; fragment od
-    wielkiej litery po zakończonym zdaniu to następna wypowiedź.
+    Fragment po myślniku zaczynający się małą literą to przypisanie ("mówi",
+    "dodaje") i dalsza narracja. Myślnik, po którym nie ma małej litery
+    (np. "5 - 10 procent"), należy do cytatu. Fragment od wielkiej litery
+    po zakończonym zdaniu narracji to następna wypowiedź.
     """
     if not _DASH_PARAGRAPH.match(paragraph):
         return []
     parts = _DASH_SPLIT.split(_DASH_PARAGRAPH.sub("", paragraph, count=1))
-    quotes = [parts[0]]
-    for previous, part in zip(parts, parts[1:]):
-        if part[:1].isupper() and previous.rstrip().endswith((".", "!", "?", "…")):
-            quotes.append(part)
+    quotes: list[str] = []
+    current: str | None = parts[0]
+    previous = parts[0]
+    for part in parts[1:]:
+        if current is not None:
+            if part[:1].islower():
+                quotes.append(current)
+                current = None
+            else:
+                current = f"{current} - {part}"
+        elif part[:1].isupper() and previous.rstrip().endswith((".", "!", "?", "…")):
+            current = part
+        previous = part
+    if current is not None:
+        quotes.append(current)
     return [q.strip() for q in quotes if q.strip()]
 
 

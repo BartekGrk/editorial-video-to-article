@@ -138,3 +138,34 @@ def test_segments_starting_in_same_second_are_all_cited():
 def test_short_dash_quote_is_checked(draft, transcript):
     draft.sections[0].paragraphs.append("- Nigdy więcej - mówi rozmówca.")
     assert not verify_draft(draft, transcript).ok
+
+
+def test_dash_quote_with_inner_number_range_is_fully_checked():
+    from app.verification import dash_quotes
+
+    assert dash_quotes("- Ceny wzrosły o 5 - 10 procent i będą rosły dalej - mówi Jan.") == [
+        "Ceny wzrosły o 5 - 10 procent i będą rosły dalej"
+    ]
+
+
+def test_other_quote_marks_are_checked(draft, transcript):
+    for text in ("Jak mówi „to jest zmyślony cytat ze studia“ ekspert.", "Słowa »to jest zmyślony cytat ze studia« padły."):
+        broken = draft.model_copy(update={"lead": text})
+        assert not verify_draft(broken, transcript).ok
+
+
+def test_repair_that_breaks_quotes_keeps_original(transcript):
+    from app import pipeline
+    from app.engines import DraftRequest, HeuristicEngine, MaterialInput
+
+    class FormatFixer(HeuristicEngine):
+        external = True  # silnik "AI": poprawia też format
+
+        def repair_draft(self, request, draft, problems):
+            return draft.model_copy(update={"lead": draft.lead + " „Całkowicie zmyślona wypowiedź w poprawce”."})
+
+    engine = FormatFixer()
+    material = MaterialInput(title="Sonda", transcript=transcript)
+    request = DraftRequest(material=material, evidence=pipeline.analyze(engine, material), mode="FULL")
+    result = pipeline.write(engine, request)
+    assert result.report.ok and not result.repaired

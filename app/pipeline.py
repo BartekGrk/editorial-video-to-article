@@ -94,9 +94,11 @@ def write(engine: Engine, request: DraftRequest) -> DraftResult:
 
     # Jedna runda poprawki: więcej rund rzadko pomaga, a mnoży koszt i czas.
     repaired = fix_quote_timecodes(engine.repair_draft(request, draft, problems), transcript)
-    return DraftResult(
-        draft=repaired, report=verify_draft(repaired, transcript), repaired=True, first_report=report
-    )
+    repaired_report = verify_draft(repaired, transcript)
+    # Poprawka samego formatu nie może zepsuć poprawnych cytatów – wtedy zostaje pierwsza wersja.
+    if report.ok and not repaired_report.ok:
+        return DraftResult(draft=draft, report=report, repaired=False, first_report=report)
+    return DraftResult(draft=repaired, report=repaired_report, repaired=True, first_report=report)
 
 
 def video_link(video_url: str | None, seconds: int) -> str | None:

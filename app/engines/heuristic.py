@@ -20,7 +20,7 @@ from app.models import (
     Thread,
     TranscriptSegment,
 )
-from app.verification import normalize
+from app.verification import word_count
 
 _SENTENCE = re.compile(r"(?<=[.!?])\s+")
 # Prowadzący zadaje pytania; jego słowa nie są wypowiedziami rozmówców do cytowania.
@@ -67,12 +67,12 @@ def _threads(guests: list[TranscriptSegment], quotes: list[Quote]) -> list[Threa
         groups = list(named.items())
     else:
         # Bez mówców dzielimy nagranie na zbliżone objętościowo części w kolejności czasu.
-        total = sum(_words(s.text) for s in guests) or 1
+        total = sum(word_count(s.text) for s in guests) or 1
         size = total / min(_MAX_THREADS, max(1, len(quotes) // 2))
         chunks, current, count = [], [], 0
         for segment in guests:
             current.append(segment)
-            count += _words(segment.text)
+            count += word_count(segment.text)
             if count >= size * (len(chunks) + 1):
                 chunks.append(current)
                 current = []
@@ -100,9 +100,6 @@ def _sentences(text: str) -> list[str]:
     return [s.strip() for s in _SENTENCE.split(text) if s.strip()]
 
 
-def _words(text: str) -> int:
-    return len(normalize(text).split())
-
 
 class HeuristicEngine:
     name = "heuristic"
@@ -123,7 +120,7 @@ class HeuristicEngine:
             quotable = [
                 s
                 for s in sentences
-                if _words(s) >= _MIN_QUOTE_WORDS and not s.endswith("?") and not _HOST_PHRASES.search(s)
+                if word_count(s) >= _MIN_QUOTE_WORDS and not s.endswith("?") and not _HOST_PHRASES.search(s)
             ]
             if quotable:
                 quotes.append(
@@ -141,7 +138,7 @@ class HeuristicEngine:
                     )
 
         threads = _threads(guests, quotes)
-        guest_words = sum(_words(s.text) for s in guests)
+        guest_words = sum(word_count(s.text) for s in guests)
         mode = ArticleMode.FULL if guest_words >= _FULL_MODE_MIN_WORDS and len(quotes) >= 4 else ArticleMode.SHORT
         named = {s.speaker for s in guests if s.speaker}
         gaps = ["Tryb demonstracyjny: analiza regułowa, bez rozumienia treści."]
@@ -169,15 +166,15 @@ class HeuristicEngine:
             blocks = [b.strip() for b in re.split(r"\n\s*\n", article.strip()) if b.strip()]
             if not blocks:
                 continue
-            titles.append(_words(blocks[0].lstrip("# ")))
+            titles.append(word_count(blocks[0].lstrip("# ")))
             if len(blocks) > 1:
-                leads.append(_words(blocks[1]))
+                leads.append(word_count(blocks[1]))
             for block in blocks[2:]:
                 # Krótki blok bez kropki na końcu traktujemy jako śródtytuł.
-                if block.startswith("#") or (_words(block) <= 8 and not block.endswith((".", "!", "?", "”"))):
+                if block.startswith("#") or (word_count(block) <= 8 and not block.endswith((".", "!", "?", "”"))):
                     subheadings += 1
                 else:
-                    paragraphs.append(_words(block))
+                    paragraphs.append(word_count(block))
 
         def avg(values: list[int], default: int) -> int:
             return round(sum(values) / len(values)) if values else default
@@ -204,7 +201,7 @@ class HeuristicEngine:
         quotes = evidence.quotes
         subject = _subject(material)
 
-        short_quotes = [q for q in quotes if _words(q.text) <= _MAX_TITLE_QUOTE_WORDS]
+        short_quotes = [q for q in quotes if word_count(q.text) <= _MAX_TITLE_QUOTE_WORDS]
         titles = [subject]
         if short_quotes:
             titles.append(f"{subject}. „{short_quotes[0].text}”")
@@ -218,7 +215,7 @@ class HeuristicEngine:
             lead += f" {_who(quotes[0], capital=True)} w nagraniu: „{quotes[0].text}”."
 
         if request.mode == ArticleMode.SHORT:
-            if len(quotes) > 1 and _words(lead) + _words(quotes[1].text) <= _SHORT_MAX_WORDS:
+            if len(quotes) > 1 and word_count(lead) + word_count(quotes[1].text) <= _SHORT_MAX_WORDS:
                 lead += f" {_who(quotes[1], capital=True)}: „{quotes[1].text}”."
             sections: list[Section] = []
             used = quotes[:2]

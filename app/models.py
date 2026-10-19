@@ -11,7 +11,7 @@ modelu językowego, więc opisy są jednocześnie instrukcją dla LLM.
 
 from enum import Enum
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, PrivateAttr
 
 
 class TranscriptSegment(BaseModel):
@@ -22,6 +22,8 @@ class TranscriptSegment(BaseModel):
 
 class Transcript(BaseModel):
     segments: list[TranscriptSegment]
+    # Znormalizowane okna tekstu do wyszukiwania cytatów (liczone raz, w verification.py).
+    _windows: list[str] | None = PrivateAttr(default=None)
 
 
 class ArticleMode(str, Enum):

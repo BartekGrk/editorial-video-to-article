@@ -8,7 +8,7 @@ Zakresy poniżej są nieco szersze, żeby ostrzegać tylko przy wyraźnym odstę
 """
 
 from app.models import ArticleDraft, ArticleMode
-from app.verification import dash_quotes, normalize
+from app.verification import dash_quotes, word_count
 
 SHORT_WORDS = (30, 110)
 FULL_WORDS = (250, 1000)
@@ -17,19 +17,16 @@ FULL_HEADINGS = (2, 6)
 TITLE_WORDS = (4, 14)
 
 
-def _words(text: str) -> int:
-    return len(normalize(text).split())
-
 
 def format_warnings(draft: ArticleDraft) -> list[str]:
     warnings = []
     body = [p for s in draft.sections for p in s.paragraphs]
-    total = _words(draft.lead) + sum(_words(p) for p in body)
+    total = word_count(draft.lead) + sum(word_count(p) for p in body)
     headings = sum(1 for s in draft.sections if s.heading)
 
     for number, title in enumerate(draft.title_options, start=1):
-        if not TITLE_WORDS[0] <= _words(title) <= TITLE_WORDS[1]:
-            warnings.append(f"Tytuł {number} ma {_words(title)} słów (zwykle {TITLE_WORDS[0]}–{TITLE_WORDS[1]}).")
+        if not TITLE_WORDS[0] <= word_count(title) <= TITLE_WORDS[1]:
+            warnings.append(f"Tytuł {number} ma {word_count(title)} słów (zwykle {TITLE_WORDS[0]}–{TITLE_WORDS[1]}).")
 
     if draft.mode == ArticleMode.SHORT:
         if not SHORT_WORDS[0] <= total <= SHORT_WORDS[1]:
@@ -41,7 +38,7 @@ def format_warnings(draft: ArticleDraft) -> list[str]:
     else:
         if not FULL_WORDS[0] <= total <= FULL_WORDS[1]:
             warnings.append(f"Artykuł ma {total} słów (zwykle {FULL_WORDS[0]}–{FULL_WORDS[1]}).")
-        lead = _words(draft.lead)
+        lead = word_count(draft.lead)
         if not FULL_LEAD_WORDS[0] <= lead <= FULL_LEAD_WORDS[1]:
             warnings.append(f"Lead ma {lead} słów (zwykle {FULL_LEAD_WORDS[0]}–{FULL_LEAD_WORDS[1]}).")
         if not FULL_HEADINGS[0] <= headings <= FULL_HEADINGS[1]:

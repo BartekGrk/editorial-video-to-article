@@ -278,7 +278,7 @@ async function renderForm(id) {
       <input type="text" id="angle" value="${esc(m.angle)}" placeholder="np. koszty dla gospodarstw domowych">
       <label for="style">Profil stylu</label>
       <select id="style"><option value="">— bez profilu —</option>
-        ${profiles.map((p) => `<option value="${esc(p.id)}" ${p.id === m.style_profile_id ? "selected" : ""}>${esc(p.name)}</option>`).join("")}
+        ${profiles.map((p) => `<option value="${esc(p.id)}" ${p.id === (id ? m.style_profile_id : DEFAULT_PROFILE) ? "selected" : ""}>${esc(p.name)}</option>`).join("")}
       </select>
       <label for="transcript">Transkrypcja</label>
       <p class="small muted">Jedna wypowiedź na linię: <code>[00:01:23] Imię Nazwisko: treść</code> lub <code>[01:23] treść</code>. Linie bez znacznika czasu są doklejane do poprzedniej wypowiedzi.</p>
@@ -492,6 +492,15 @@ function analyze(button) {
 
 // --- zakładka: draft ---------------------------------------------------------
 
+const DEFAULT_PROFILE = "wp-finanse";
+
+// Profil, którego użyje serwer: zapisany w materiale, a przed pierwszym draftem – domyślny.
+// Po drafcie brak profilu oznacza świadomy wybór "bez profilu".
+function effectiveProfile(m) {
+  if (m.style_profile_id) return m.style_profile_id;
+  return m.draft ? "" : DEFAULT_PROFILE;
+}
+
 function generatorCard(m) {
   const suggested = m.evidence?.suggested_mode;
   const current = m.mode || suggested || "SHORT";
@@ -509,7 +518,7 @@ function generatorCard(m) {
       <div class="grid2">
         <div><label for="target">Docelowa długość (słowa, opcjonalnie)</label><input type="number" id="target" min="30" max="3000" placeholder="wynika z materiału"></div>
         <div><label for="profile">Profil stylu</label><select id="profile"><option value="">— bez profilu —</option>
-          ${state.profiles.map((p) => `<option value="${esc(p.id)}" ${p.id === m.style_profile_id ? "selected" : ""}>${esc(p.name)}</option>`).join("")}</select></div>
+          ${state.profiles.map((p) => `<option value="${esc(p.id)}" ${p.id === effectiveProfile(m) ? "selected" : ""}>${esc(p.name)}</option>`).join("")}</select></div>
       </div>
       <label for="instructions">Wskazówki dla tej wersji (opcjonalnie)</label>
       <input type="text" id="instructions" placeholder="np. zacznij od wypowiedzi przeciwników kaucji">
@@ -661,7 +670,8 @@ function bindGenerator(root) {
       mode: root.querySelector("input[name=mode]:checked").value,
       target_words: Number(root.querySelector("#target").value) || null,
       extra_instructions: root.querySelector("#instructions").value.trim(),
-      style_profile_id: root.querySelector("#profile").value || null,
+      // "" = świadomie bez profilu (null oznaczałby profil materiału lub domyślny).
+      style_profile_id: root.querySelector("#profile").value,
     };
     busy(event.target, "Generuję draft…", async () => {
       const result = await api(`/api/materials/${m.id}/draft`, { method: "POST", body });
