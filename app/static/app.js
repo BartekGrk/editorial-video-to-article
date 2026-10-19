@@ -122,6 +122,7 @@ async function loadConfig() {
 
 async function renderList() {
   const materials = await api("/api/materials");
+  if (!stillOn("#/")) return;
   const rows = materials.map((m) => {
     const [label, cls] = STATUS[m.status];
     const stage = m.status === "PROCESSING" ? ` · ${esc(stageName(m.job_stage))}` : "";
@@ -260,6 +261,7 @@ function drawProcessing(m) {
 
 async function renderForm(id) {
   const [material, profiles] = await Promise.all([id ? api(`/api/materials/${id}`) : null, api("/api/style-profiles")]);
+  if (!stillOn(id ? `#/m/${id}/edit` : "#/new")) return;
   const m = material || { title: "", category: "", topic: "", angle: "", video_url: "", transcript_raw: "", external_processing_allowed: false, style_profile_id: null };
   const categories = ["sonda uliczna", "wywiad", "reportaż", "komentarz eksperta", "konferencja", "inne"];
 
@@ -327,15 +329,21 @@ async function renderForm(id) {
 
 // --- przestrzeń robocza ------------------------------------------------------
 
+// Odpowiedź serwera może przyjść po zmianie widoku – rysujemy tylko, gdy adres się nie zmienił.
+function stillOn(hash) {
+  return (location.hash || "#/") === hash;
+}
+
 async function renderWorkspace(id) {
   clearTimeout(renderWorkspace.timer);
   const [material, profiles] = await Promise.all([api(`/api/materials/${id}`), api("/api/style-profiles")]);
+  if (!stillOn(`#/m/${id}`)) return;
   state.material = material;
   state.profiles = profiles;
   if (material.status === "PROCESSING" || (material.status === "FAILED" && !material.transcript)) {
     drawProcessing(material);
     if (material.status === "PROCESSING") {
-      renderWorkspace.timer = setTimeout(() => { if (location.hash === `#/m/${id}`) renderWorkspace(id); }, 2000);
+      renderWorkspace.timer = setTimeout(() => { if (stillOn(`#/m/${id}`)) renderWorkspace(id); }, 2000);
     }
     return;
   }
@@ -347,6 +355,7 @@ async function renderWorkspace(id) {
 
 function drawWorkspace() {
   const m = state.material;
+  if (!stillOn(`#/m/${m.id}`)) return;
   const [label, cls] = STATUS[m.status];
   view.innerHTML = `
     <div class="row">
@@ -775,6 +784,7 @@ const PROFILE_FIELDS = [
 
 async function renderStyles() {
   const profiles = await api("/api/style-profiles");
+  if (!stillOn("#/styles")) return;
   view.innerHTML = `
     <h1>Profile stylu</h1>
     <p class="muted">Profil to jawny opis formatu (długości, tytuły, cytowanie, ton) wyprowadzony z kilku publicznych artykułów.
