@@ -21,6 +21,8 @@ class DraftResult:
     draft: ArticleDraft
     report: VerificationReport
     repaired: bool
+    # Raport pierwszej wersji (przed poprawką) – potrzebny do ewaluacji jakości modelu.
+    first_report: VerificationReport | None = None
 
 
 def sanitize_evidence(evidence: EvidencePack, transcript: Transcript) -> EvidencePack:
@@ -68,11 +70,13 @@ def write(engine: Engine, request: DraftRequest) -> DraftResult:
     draft = engine.write_draft(request)
     report = verify_draft(draft, transcript)
     if report.ok:
-        return DraftResult(draft=draft, report=report, repaired=False)
+        return DraftResult(draft=draft, report=report, repaired=False, first_report=report)
 
     # Jedna runda poprawki: więcej rund rzadko pomaga, a mnoży koszt i czas.
-    draft = engine.repair_draft(request, draft, report.problems())
-    return DraftResult(draft=draft, report=verify_draft(draft, transcript), repaired=True)
+    repaired = engine.repair_draft(request, draft, report.problems())
+    return DraftResult(
+        draft=repaired, report=verify_draft(repaired, transcript), repaired=True, first_report=report
+    )
 
 
 def video_link(video_url: str | None, seconds: int) -> str | None:

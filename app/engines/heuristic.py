@@ -29,7 +29,7 @@ _NUMERIC = re.compile(
     r"\d|\b(?:tysiąc|tysięcy|milion|miliard|procent|złotych|zł|groszy|euro|dolarów)\w*", re.IGNORECASE
 )
 # Powyżej tej liczby słów rozmówców materiał zwykle wystarcza na pełny artykuł.
-_FULL_MODE_MIN_WORDS = 600
+_FULL_MODE_MIN_WORDS = 400
 _MIN_QUOTE_WORDS = 5
 _DEMO_NOTE = "Draft z trybu demonstracyjnego (bez AI): szablon z dosłownych wypowiedzi do dalszej redakcji."
 
