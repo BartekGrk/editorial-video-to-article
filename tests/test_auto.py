@@ -209,3 +209,22 @@ def test_export_rejects_negative_title(client, raw_transcript):
     mid = client.post("/api/materials", json={"title": "x", "transcript_raw": raw_transcript}).json()["id"]
     client.post(f"/api/materials/{mid}/draft", json={"mode": "SHORT"})
     assert client.get(f"/api/materials/{mid}/export?format=html&title=-1").status_code == 422
+
+
+@needs_ffmpeg
+def test_retry_after_failed_transcription(tmp_path):
+    transcriber = FakeTranscriber(error=RuntimeError("chwilowy błąd"))
+    client = TestClient(create_app(Store(":memory:"), HeuristicEngine(), transcriber, InlineRunner(), tmp_path))
+    mid = client.post("/api/auto", files={"file": ("a.wav", _wav_bytes(), "audio/wav")}).json()["id"]
+    assert client.get(f"/api/materials/{mid}").json()["status"] == "FAILED"
+    transcriber.error = None
+    assert client.post(f"/api/materials/{mid}/retry").status_code == 202
+    assert client.get(f"/api/materials/{mid}").json()["status"] == "APPROVED"
+
+
+def test_retry_without_media_is_rejected(auto_client):
+    store = Store(":memory:")
+    client = TestClient(create_app(store, HeuristicEngine(), FakeTranscriber(), InlineRunner()))
+    material = Material(title="x", status=MaterialStatus.FAILED, source="nagranie.mp4")
+    store.save(material)
+    assert client.post(f"/api/materials/{material.id}/retry").status_code == 409

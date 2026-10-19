@@ -496,6 +496,8 @@ def create_app(
                         raise HTTPException(status_code=413, detail=f"Plik większy niż {limit // 1024 // 1024} MB")
                     handle.write(chunk)
             source = str(target)
+            # Zapisany od razu: odtwarzanie w UI i ponowienie automatu po błędzie.
+            material.media_file = str(target.relative_to(request.app.state.media_dir))
         store.save(material)
         options = AutoRunOptions(mode=run_mode, style_profile_id=style_profile_id or None, auto_approve=approve_when_ok)
         return _view(start_auto_job(request, material, options, source))
@@ -511,6 +513,22 @@ def create_app(
             raise HTTPException(status_code=409, detail="Materiał nie ma transkrypcji")
         _transcript(material)
         return _view(start_auto_job(request, material, options))
+
+    @app.post("/api/materials/{material_id}/retry", status_code=202)
+    def retry_auto(request: Request, material: Material = Depends(get_material)) -> MaterialView:
+        """Ponowienie automatu po błędzie: od transkrypcji, jeśli jej jeszcze nie ma."""
+        _ensure_idle(material)
+        _ensure_consent(request.app.state.engine, material)
+        if material.transcript_raw.strip():
+            return _view(start_auto_job(request, material, AutoRunOptions()))
+        media = request.app.state.media_dir / material.media_file if material.media_file else None
+        if media is not None and media.is_file():
+            source = str(media)
+        elif material.source.startswith(("http://", "https://")):
+            source = material.source
+        else:
+            raise HTTPException(status_code=409, detail="Brak nagrania do ponownego przetworzenia")
+        return _view(start_auto_job(request, material, AutoRunOptions(), source))
 
     @app.get("/media/{material_id}", include_in_schema=False)
     def media(request: Request, material: Material = Depends(get_material)) -> FileResponse:

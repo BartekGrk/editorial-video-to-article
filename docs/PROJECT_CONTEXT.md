@@ -4,9 +4,13 @@
 
 ## Stan (2026-10-19)
 
-Zrealizowane: Faza 1 (prototyp) w całości oraz część Fazy 2 (profil stylu, ewaluacja, śledzenie źródeł cytatów w UI). Działa w trybie demonstracyjnym i z Claude. Testy: `python -m pytest -q`.
+Zrealizowane: Faza 1 w całości, większość Fazy 2 (profil stylu, ewaluacja, śledzenie źródeł cytatów) oraz z sekcji „Później”: ASR z pliku wideo i pobieranie z linku. Na prośbę użytkownika proces działa **automatycznie od nagrania do zatwierdzonego tekstu** w stylu WP Finanse. Testy: `python -m pytest -q`.
 
-**Nie sprawdzono na prawdziwym API:** prompty i jakość draftów Claude nie zostały ocenione na realnych wywołaniach, bo w środowisku budowy nie było klucza. Testy sprawdzają parametry wywołania i obsługę odpowiedzi na atrapie klienta.
+**Sprawdzone na danych:** automat od dźwięku (syntetyczne nagrania Piper w `examples/eval`): WER transkrypcji 3,7–7,7% (`medium`), 15/15 cytatów poprawnych, wszystkie drafty przeszły weryfikację w trybie demonstracyjnym. Przepływ UI sprawdzony w przeglądarce (Playwright).
+
+**Nie sprawdzono:**
+- jakości tekstów Claude na realnych wywołaniach: w środowisku budowy nie było klucza API, a testy sprawdzają parametry wywołania i obsługę odpowiedzi na atrapie;
+- prawdziwych nagrań WP Finanse. Wideo WP działa w ich własnym odtwarzaczu bez publicznego pliku, a pobieranie z YouTube zwróciło tu 403 (ochrona przed botami po stronie YouTube, której nie obchodzimy).
 
 ## Kluczowe zasady ze specyfikacji
 
@@ -28,17 +32,24 @@ Zrealizowane: Faza 1 (prototyp) w całości oraz część Fazy 2 (profil stylu, 
 8. **Zgoda na zewnętrzne API** zapisywana jest dla każdego materiału. Silnik zewnętrzny bez zgody zwraca 403.
 9. **Profile stylu** przechowują tylko opis formatu, nie teksty artykułów.
 10. **Zmiana transkrypcji** kasuje analizę i draft, bo odnosiły się do starego tekstu.
+11. **Automat:** zadania w tle (jeden wątek) z etapami zapisywanymi w bazie. Przerwane restartem są oznaczane jako błąd, a ponowienie startuje od zapisanego pliku albo linku. Zatwierdzenie następuje tylko przy pozytywnej weryfikacji. O trybie decyduje analiza, a redaktor może go wymusić.
+12. **ASR lokalnie** (faster-whisper `medium`, VAD): nagranie nie trafia do zewnętrznych usług. `medium` zamiast `small`, bo w procesie bez człowieka błąd ASR może trafić do cytatu (pomiar: `small` 1,5 min, `medium` 3,8 min na 4,4 min nagrania).
+13. **Mówcy** przypisywani przez model na podstawie treści. Bez modelu (tryb demonstracyjny) transkrypcja jest bez mówców, a parser nie traktuje wtedy „Słowo: …” jako etykiety mówcy.
+14. **Styl WP Finanse** z analizy 24 tekstów wideo. Profil opisuje format (długości, śródtytuły, akapity dialogowe), a progi służą też do nieblokujących ostrzeżeń o formacie. Model AI dostaje te ostrzeżenia do poprawki.
+15. **Akapit z myślnikiem** („- treść - mówi X”) to zawsze cytat i jest sprawdzany bez minimalnej długości. Cytaty w cudzysłowie sprawdzamy od 4 słów (krótsze to zwykle nazwy własne).
+16. **Odporność na odpowiedzi modelu:** luźny schemat draftu (liczba tytułów normalizowana po stronie aplikacji), jedno ponowienie przy błędzie walidacji, mechaniczna korekta timecode'u cytatu, którego tekst i mówca się zgadzają.
+17. **Bezpieczeństwo:** limit rozmiaru pliku, blokada linków do adresów wewnętrznych (bez sprawdzania przekierowań – ograniczenie), pliki zapisywane pod nazwą nadaną przez serwer.
 
 ## Znane ograniczenia
 
-- Weryfikacja porównuje z transkrypcją, nie z nagraniem. Błędy ASR (kwoty, nazwiska) przechodzą dalej. Zabezpieczeniem są `requires_verification` i kontrola redaktora.
-- Parafraza z błędnym sensem nie jest wykrywana; sprawdzamy dosłowność cytatów i obecność źródeł tez, nie poprawność interpretacji.
-- Cytat krótszy niż 4 słowa w cudzysłowie nie jest sprawdzany.
-- Brak ASR z pliku wideo, analizy kadrów i integracji z CMS. To elementy z sekcji „Później, opcjonalnie” specyfikacji.
-- Prototyp dla jednego użytkownika: bez logowania i bez kontroli współbieżnej edycji.
+- Weryfikacja porównuje z transkrypcją, a ta pochodzi z ASR. Błąd rozpoznania mowy (np. „atak kredytu” zamiast „rata kredytu”) przejdzie do cytatu jako „zgodny z transkrypcją”. Zabezpieczeniem są `requires_verification`, uwagi o mówcach i odtwarzacz z przeskokiem do timecode.
+- Przypisanie mówców przez model może się mylić; niepewne segmenty trafiają do uwag.
+- Nie wykrywamy parafrazy z błędnym sensem: sprawdzamy dosłowność cytatów i źródła tez, nie interpretację.
+- Brak analizy obrazu (napisy, wykresy, dokumenty w kadrze) i integracji z CMS.
+- Jeden użytkownik, bez logowania. Zadania wykonywane po kolei.
 
 ## Następny krok (jeden)
 
-**Pilot na realnym API:** uruchomić `scripts/evaluate.py` z Claude na 5–10 publicznych parach wideo + artykuł (sekcja 7 specyfikacji), wypełnić ręczną ocenę redaktora w raporcie i na tej podstawie dostroić prompty w `app/engines/prompts.py`.
+**Pilot z kluczem API na publicznych nagraniach:** uruchomić `python scripts/evaluate.py <katalog> --from-audio` z Claude na 5–10 publicznych nagraniach WP Finanse (pliki od redakcji lub z kanału, jeśli dostępne), porównać z opublikowanymi tekstami, uzupełnić ocenę redaktora w raporcie i dostroić prompty (`app/engines/prompts.py`) oraz profil (`app/styles/wp_finanse.json`).
 
 Otwarte pytania do redakcji (pola CMS, przykładowe pary, polityka danych) znajdują się w sekcji 8 specyfikacji.

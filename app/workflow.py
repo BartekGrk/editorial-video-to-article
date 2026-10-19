@@ -6,6 +6,7 @@ zamiast zawieszonego zadania.
 """
 
 import logging
+import shutil
 from pathlib import Path
 
 from app import auto
@@ -92,6 +93,8 @@ def run_auto_job(
         _update(store, material_id, **fields)
     except LookupError:
         log.info("Materiał %s usunięty w trakcie przetwarzania", material_id)
+        # Usunięcie mogło nastąpić przed zapisem pobranego nagrania – sprzątamy po zadaniu.
+        shutil.rmtree(media_dir / material_id, ignore_errors=True)
     except Exception as error:  # zadanie w tle: każdy błąd musi trafić do materiału
         log.exception("Automat dla %s zakończył się błędem", material_id)
         try:

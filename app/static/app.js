@@ -243,8 +243,13 @@ function drawProcessing(m) {
         return `<li class="${cls}">${name}</li>`;
       }).join("")}</ol>
       ${failed ? `<div class="verify err"><strong>Błąd:</strong> ${esc(m.job_error || "nieznany")}</div>
-        <button id="delete-failed">Usuń materiał</button>` : '<p class="small muted">Transkrypcja trwa zwykle około długości nagrania. Strona odświeża się sama.</p>'}
+        <div class="row"><button class="primary" id="retry-failed">Spróbuj ponownie</button><button id="delete-failed">Usuń materiał</button></div>` : '<p class="small muted">Transkrypcja trwa zwykle około długości nagrania. Strona odświeża się sama.</p>'}
     </div>`;
+  view.querySelector("#retry-failed")?.addEventListener("click", (e) => busy(e.target, "Uruchamiam…", async () => {
+    await api(`/api/materials/${m.id}/retry`, { method: "POST" });
+    renderWorkspace.lastStage = "PROCESSING";
+    renderWorkspace(m.id);
+  }));
   view.querySelector("#delete-failed")?.addEventListener("click", (e) => busy(e.target, "Usuwanie…", async () => {
     await api(`/api/materials/${m.id}`, { method: "DELETE" });
     location.hash = "#/";
