@@ -42,7 +42,8 @@ Jeśli tekst potrzebuje tła, wpisz to jako uwagę w `editor_notes`, zamiast je 
 fraza w cudzysłowie „…” wpleciona w zdanie albo osobny akapit dialogowy zaczynający się od myślnika: \
 "- Dosłowna wypowiedź - mówi Imię Nazwisko, funkcja." Każdy cytat (także w tytule i leadzie) dodaj do \
 `quotes` z mówcą i `timecode_seconds`. Parafrazy pisz bez cudzysłowu, z przypisaniem („Jak mówi…”, \
-„Jego zdaniem…”, „Podkreśla, że…”). Akapit zaczynający się od myślnika zawsze jest traktowany jako cytat.
+„Jego zdaniem…”, „Podkreśla, że…”). Akapit zaczynający się od myślnika zawsze jest traktowany jako cytat, więc nie używaj list wypunktowanych \
+z myślnikami. Przypisanie po myślniku zaczynaj czasownikiem („- … - mówi Jan Kowalski, rolnik.”).
 3. Relację rozmówcy przedstawiaj jako jego słowa, nie jako potwierdzony fakt. Tezy z liczbami, datami \
 i nazwiskami umieść w `claims` z `requires_verification: true` i wskazaniem `evidence_timecodes`.
 4. Tryb SHORT: tekst pod wideo. 2–3 tytuły; `lead` to jedyny akapit tekstu (40–90 słów): sedno, \

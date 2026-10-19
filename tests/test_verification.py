@@ -220,3 +220,49 @@ def test_inline_quote_declared_with_wrong_speaker_warns(draft, transcript):
     draft.quotes[0] = draft.quotes[0].model_copy(update={"speaker": "Przechodzień 2"})
     report = verify_draft(draft, transcript)
     assert report.attribution_warnings
+
+
+def test_third_review_regressions(draft, transcript):
+    from app.verification import dash_quotes, extract_inline_quotes
+
+    # akapit dialogowy od wielokropka lub cudzysłowu nadal jest cytatem
+    assert dash_quotes("- …i wtedy rząd obniżył podatki - mówi Jan.") == ["…i wtedy rząd obniżył podatki"]
+    assert dash_quotes("- “Rząd obniżył podatki” - mówi X.") == ["“Rząd obniżył podatki”"]
+    # lista od małej litery w dalszych liniach to nie cytaty
+    assert dash_quotes("Najważniejsze zmiany:\n- wyższy próg podatkowy\n- niższa stawka VAT") == []
+    # przypisanie formą przeszłą i samym nazwiskiem
+    assert dash_quotes("- Inflacja spada - podkreślał Jan Kowalski.") == ["Inflacja spada"]
+    assert dash_quotes("- Inflacja spada - Jan Kowalski, ekonomista.") == ["Inflacja spada"]
+    # dwa cytaty w jednym akapicie nie sklejają się
+    draft.lead = 'Jak mówi Jan, „inflacja spada powoli ale stale". Dodał też „ceny prądu wzrosną w przyszłym roku”.'
+    quoted = [q for _, q in extract_inline_quotes(draft) if "inflacja" in q or "ceny" in q]
+    assert quoted == ["inflacja spada powoli ale stale", "ceny prądu wzrosną w przyszłym roku"]
+
+
+def test_asr_pause_ellipsis_in_verbatim_quote():
+    from app.models import Transcript, TranscriptSegment
+
+    t = Transcript(segments=[TranscriptSegment(start_seconds=0, speaker="A", text="No cóż... trzeba po prostu płacić te rachunki co miesiąc.")])
+    q = Quote(text="No cóż... trzeba po prostu płacić te rachunki co miesiąc", speaker="A", timecode_seconds=0)
+    assert check_quote(q, t).status == QuoteStatus.VERIFIED
+
+
+def test_repeated_words_use_declared_speaker():
+    from app.models import ArticleDraft, Transcript, TranscriptSegment
+
+    t = Transcript(
+        segments=[
+            TranscriptSegment(start_seconds=1, speaker="Prowadzący", text="Czy ceny prądu wzrosną w przyszłym roku znacząco?"),
+            TranscriptSegment(start_seconds=10, speaker="Jan Kowalski", text="Ceny prądu wzrosną w przyszłym roku znacząco."),
+        ]
+    )
+    d = ArticleDraft(
+        mode="SHORT",
+        title_options=["Ceny prądu", "Prąd podrożeje"],
+        lead="Ekonomista ostrzega: „ceny prądu wzrosną w przyszłym roku znacząco”.",
+        sections=[],
+        quotes=[Quote(text="Ceny prądu wzrosną w przyszłym roku znacząco", speaker="Jan Kowalski", timecode_seconds=10)],
+    )
+    report = verify_draft(d, t)
+    assert report.strict_ok
+    assert report.inline_quotes[0].speaker == "Jan Kowalski"

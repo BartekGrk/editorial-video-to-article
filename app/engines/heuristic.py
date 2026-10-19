@@ -231,6 +231,9 @@ class HeuristicEngine:
                     Section(heading=thread.name, paragraphs=[f"- {q.text} - {_attribution(q)}." for q in thread_quotes])
                 )
 
+        # Cytat z tytułu też musi być na liście cytatów (z mówcą), inaczej automat go nie zatwierdzi.
+        if short_quotes and short_quotes[0] not in used:
+            used.append(short_quotes[0])
         return ArticleDraft(
             mode=request.mode,
             title_options=titles[:3],

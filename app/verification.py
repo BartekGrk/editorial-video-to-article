@@ -21,14 +21,17 @@ _NON_WORD = re.compile(r"[^\w]+", re.UNICODE)
 # Cudzysłowy: „…” i „…“ (polskie), “…” (angielskie), "…" (proste), »…« i «…».
 # Prosty " zamyka „ tylko, gdy w tekście nie ma ” ani “ – inaczej wtrącenie w "…" ucinałoby cytat.
 _INLINE_QUOTE = re.compile(
-    r"„([^”“]+)[”“]|„([^”“\"]+)\"|“([^”]+)”|\"([^\"]+)\"|»([^«]+)«|«([^»]+)»"
+    r"„([^”“„]+)[”“]|„([^”“„\"]+)\"|“([^”]+)”|\"([^\"]+)\"|»([^«]+)«|«([^»]+)»"
 )
 # Krótkie frazy w cudzysłowie to zwykle nazwy własne (programy, ustawy),
 # a nie cytaty; sprawdzamy tylko wypowiedzi od 4 słów.
 _MIN_INLINE_QUOTE_WORDS = 4
 # Konwencja WP Finanse: wypowiedź jako akapit z myślnikiem,
 # np. "- Treść wypowiedzi - mówi Jan Kowalski, rolnik."
-_DASH_LINE = re.compile(r"^\s*[-–—]\s*(?=\w|„|\")")
+_DASH_LINE = re.compile(r"^\s*[-–—]\s*(?=[^\s\-–—])")
+# Dalsze linie akapitu z myślnikiem traktujemy jako wypowiedź, gdy zaczynają się jak zdanie
+# (wielka litera, cyfra, wielokropek, cudzysłów) – linie listy od małej litery to nie cytaty.
+_SENTENCE_START = re.compile(r"^[\W_]*(?:[A-ZĄĆĘŁŃÓŚŹŻ0-9]|…|\.\.\.)")
 _DASH_SPLIT = re.compile(r"\s+[-–—]\s+")
 # Po myślniku przypisanie zaczyna się czasownikiem mówienia ("mówi", "dodaje"…);
 # każdy inny fragment po myślniku traktujemy jako dalszy ciąg wypowiedzi i sprawdzamy.
@@ -48,11 +51,20 @@ relacjonuje relacjonował relacjonowała słyszymy usłyszeliśmy słyszę wtrą
 zastrzega zastrzegł zastrzegła żartuje żartował żartowała deklaruje deklarował deklarowała
 zapowiada zapowiedział zapowiedziała wskazuje wskazywał wskazywała narzeka narzekał narzekała
 skarży skarżył skarżyła alarmuje alarmował alarmowała dopowiada dopowiedział dopowiedziała
+podkreślał podkreślała podkreślali dodawał dodawała dodawali zaznaczał zaznaczała zaznaczają
+wyjaśniał wyjaśniała wyjaśniają zauważał zauważała zauważają wskazał wskazała wskazują
+opowiedział opowiedziała opowiadają oceniał oceniała stwierdzał stwierdzała przyznawał przyznawała
+zapewniał zapewniała zapewniają ostrzegał ostrzegała ostrzegają przypominał przypominała przypominają
+wspomniał wspomniała wspominają deklarują zapowiadał zapowiadała zapowiadają podsumowywał podsumowywała
+kwitował kwitowała argumentują dopowiadał dopowiadała wtrącał wtrącała zastrzegał zastrzegała zastrzegają
+apelują alarmują narzekają skarżą komentują relacjonują przekonywali mówiąc dodając podkreślając
 """.split()
 # Po myślniku przypisanie zaczyna się czasownikiem mówienia ("mówi", "dodaje"…); jawna lista form,
 # bo prefiks ("doda") łapałby też słowa z wypowiedzi ("dodatkowo"). Każdy inny fragment po
 # myślniku traktujemy jako dalszy ciąg wypowiedzi i sprawdzamy.
 _ATTRIBUTION = re.compile(r"^(?:" + "|".join(_ATTRIBUTION_VERBS) + r")\b")
+# Przypisanie samym nazwiskiem i funkcją: "- Cytat - Jan Kowalski, ekonomista."
+_NAME_ATTRIBUTION = re.compile(r"^[A-ZĄĆĘŁŃÓŚŹŻ][\w-]+(?: [A-ZĄĆĘŁŃÓŚŹŻ][\w-]+)+,\s")
 # Skrót cytatu wielokropkiem jest dozwolony, ale z samych pojedynczych słów
 # dałoby się skleić zdanie o odwrotnym sensie.
 _MIN_FRAGMENT_WORDS = 3
@@ -143,12 +155,25 @@ def normalize(text: str) -> str:
     return " ".join(_NON_WORD.sub(" ", text.casefold()).split())
 
 
-def _fragments(quote_text: str) -> list[str]:
-    """Fragmenty cytatu między wielokropkami; [] gdy skrót jest zbyt rozdrobniony."""
-    fragments = [f for f in (normalize(p) for p in _ELLIPSIS.split(quote_text)) if f]
-    if len(fragments) > 1 and any(len(f.split()) < _MIN_FRAGMENT_WORDS for f in fragments):
-        return []
-    return fragments
+def _fragment_options(quote_text: str) -> tuple[list[list[str]], bool]:
+    """Warianty dopasowania cytatu i informacja, czy odrzucono zbyt rozdrobniony skrót.
+
+    Najpierw cały tekst (ASR zapisuje pauzy jako "..." – dosłowny cytat z pauzą musi
+    przejść), potem fragmenty między wielokropkami, jeśli każdy ma co najmniej 3 słowa.
+    """
+    full = normalize(quote_text)
+    if not full:
+        return [], False
+    options = [[full]]
+    parts = [f for f in (normalize(p) for p in _ELLIPSIS.split(quote_text)) if f]
+    fragmented = len(parts) > 1 and any(len(p.split()) < _MIN_FRAGMENT_WORDS for p in parts)
+    if len(parts) > 1 and not fragmented:
+        options.append(parts)
+    return options, fragmented
+
+
+def _matches(options: list[list[str]], window: str) -> bool:
+    return any(_contains_in_order(window, fragments) for fragments in options)
 
 
 def _contains_in_order(haystack: str, fragments: list[str]) -> bool:
@@ -197,14 +222,9 @@ def _same_speaker(a: str | None, b: str | None) -> bool:
 
 
 def check_quote(quote: Quote, transcript: Transcript) -> QuoteCheck:
-    fragments = _fragments(quote.text)
-    if not fragments:
-        message = (
-            "Skrót cytatu zbyt rozdrobniony: między wielokropkami potrzeba co najmniej 3 słów"
-            if normalize(quote.text)
-            else "Pusty cytat"
-        )
-        return QuoteCheck(quote=quote, status=QuoteStatus.NOT_FOUND, message=message)
+    options, fragmented = _fragment_options(quote.text)
+    if not options:
+        return QuoteCheck(quote=quote, status=QuoteStatus.NOT_FOUND, message="Pusty cytat")
 
     segments = transcript.segments
     cited = segment_at(transcript, quote.timecode_seconds)
@@ -215,7 +235,7 @@ def check_quote(quote: Quote, transcript: Transcript) -> QuoteCheck:
         else []
     )
     windows = _windows(transcript)
-    matches = [i for i in candidates if _contains_in_order(windows[i], fragments)]
+    matches = [i for i in candidates if _matches(options, windows[i])]
     if matches:
         verified = [i for i in matches if segments[i].speaker is None or _same_speaker(quote.speaker, segments[i].speaker)]
         if verified:
@@ -236,7 +256,7 @@ def check_quote(quote: Quote, transcript: Transcript) -> QuoteCheck:
         )
 
     for i, segment in enumerate(segments):
-        if i not in candidates and _contains_in_order(windows[i], fragments):
+        if i not in candidates and _matches(options, windows[i]):
             return QuoteCheck(
                 quote=quote,
                 status=QuoteStatus.TIMECODE_MISMATCH,
@@ -248,22 +268,25 @@ def check_quote(quote: Quote, transcript: Transcript) -> QuoteCheck:
                 ),
             )
 
-    return QuoteCheck(
-        quote=quote,
-        status=QuoteStatus.NOT_FOUND,
-        message="Brak takiej wypowiedzi w transkrypcji: cytat nie może zostać opublikowany",
+    message = (
+        "Skrót cytatu zbyt rozdrobniony: między wielokropkami potrzeba co najmniej 3 słów"
+        if fragmented
+        else "Brak takiej wypowiedzi w transkrypcji: cytat nie może zostać opublikowany"
     )
+    return QuoteCheck(quote=quote, status=QuoteStatus.NOT_FOUND, message=message)
+
+
+def find_quotes(text: str, transcript: Transcript) -> list[int]:
+    """Indeksy wszystkich segmentów, od których zaczyna się cytat (bez względu na mówcę)."""
+    options, _ = _fragment_options(text)
+    if not options:
+        return []
+    return [i for i, window in enumerate(_windows(transcript)) if _matches(options, window)]
 
 
 def find_quote(text: str, transcript: Transcript) -> int | None:
-    """Indeks pierwszego segmentu, od którego zaczyna się cytat (bez względu na mówcę)."""
-    fragments = _fragments(text)
-    if not fragments:
-        return None
-    for i in range(len(transcript.segments)):
-        if _contains_in_order(_windows(transcript)[i], fragments):
-            return i
-    return None
+    matches = find_quotes(text, transcript)
+    return matches[0] if matches else None
 
 
 def dash_quotes(paragraph: str) -> list[str]:
@@ -275,15 +298,18 @@ def dash_quotes(paragraph: str) -> list[str]:
     Po przypisaniu i zakończonym zdaniu narracji kolejny fragment to nowa wypowiedź.
     """
     quotes: list[str] = []
-    for line in paragraph.splitlines():
+    for number, line in enumerate(paragraph.splitlines()):
         if not _DASH_LINE.match(line):
             continue
-        parts = _DASH_SPLIT.split(_DASH_LINE.sub("", line, count=1))
+        content = _DASH_LINE.sub("", line, count=1)
+        if number > 0 and not (_SENTENCE_START.match(content) or _ATTRIBUTION.search(content)):
+            continue
+        parts = _DASH_SPLIT.split(content)
         current: str | None = parts[0]
         narration = ""
         for part in parts[1:]:
             if current is not None:
-                if _ATTRIBUTION.match(part):
+                if _ATTRIBUTION.match(part) or _NAME_ATTRIBUTION.match(part):
                     quotes.append(current)
                     current, narration = None, part
                 else:
@@ -323,19 +349,26 @@ def check_inline_quotes(draft: ArticleDraft, transcript: Transcript) -> list[Inl
     declared = [(normalize(q.text), q) for q in draft.quotes]
     checks = []
     for location, text in extract_inline_quotes(draft):
-        index = find_quote(text, transcript)
-        speaker = None if index is None else transcript.segments[index].speaker
-        is_declared = True
-        if index is not None and speaker is not None:
-            fragments = _fragments(text)
-            matching = [q for n, q in declared if _contains_in_order(n, fragments) or (n and n in normalize(text))]
-            is_declared = any(_same_speaker(q.speaker, speaker) for q in matching)
+        matches = find_quotes(text, transcript)
+        options, _ = _fragment_options(text)
+        normalized = normalize(text)
+        candidates = [q for n, q in declared if n and (_matches(options, n) or n in normalized)]
+        index, is_declared = (matches[0] if matches else None), True
+        if matches and any(transcript.segments[i].speaker is not None for i in matches):
+            # Te same słowa mogą paść kilka razy (np. prowadzący powtarza słowa gościa):
+            # wystarczy, że deklarowany mówca jest jednym z mówiących je w nagraniu.
+            agreed = [
+                i for i in matches if any(_same_speaker(q.speaker, transcript.segments[i].speaker) for q in candidates)
+            ]
+            is_declared = bool(agreed)
+            index = agreed[0] if agreed else index
+        speaker = transcript.segments[index].speaker if index is not None else None
         checks.append(
             InlineQuoteCheck(
                 location=location,
                 text=text,
-                verified=index is not None,
-                found_at_seconds=None if index is None else transcript.segments[index].start_seconds,
+                verified=bool(matches),
+                found_at_seconds=transcript.segments[index].start_seconds if index is not None else None,
                 speaker=speaker,
                 declared=is_declared,
             )

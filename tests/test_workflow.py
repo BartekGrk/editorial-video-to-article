@@ -137,3 +137,26 @@ def test_demo_draft_passes_verification_for_long_title(client, raw_transcript):
     ).json()["id"]
     for mode in ("SHORT", "FULL"):
         assert client.post(f"/api/materials/{mid}/draft", json={"mode": mode}).json()["material"]["report"]["ok"]
+
+
+def test_heuristic_title_quote_is_declared(client):
+    raw = "\n".join(
+        [
+            "[00:00:01] Anna: Uważam, że ceny w sklepach rosną zdecydowanie za szybko w tym roku, naprawdę bardzo szybko.",
+            "[00:00:10] Piotr: Moim zdaniem rząd powinien zrobić coś z cenami żywności i energii już teraz.",
+            "[00:00:20] Ewa: Trzeba wreszcie obniżyć wszystkie podatki dochodowe.",
+        ]
+    )
+    mid = client.post("/api/materials", json={"title": "Sonda o cenach", "transcript_raw": raw}).json()["id"]
+    report = client.post(f"/api/materials/{mid}/draft", json={"mode": "SHORT"}).json()["material"]["report"]
+    assert report["strict_ok"] is True
+
+
+def test_transcript_edit_clears_asr_notes(client, raw_transcript):
+    store = client.app.state.store
+    from app.store import Material
+
+    material = Material(title="x", transcript_raw=raw_transcript, transcript_notes=["Mówcy przypisani automatycznie"])
+    store.save(material)
+    client.put(f"/api/materials/{material.id}", json={"title": "x", "transcript_raw": raw_transcript + "\n[00:02:00] Ala: Nowe."})
+    assert client.get(f"/api/materials/{material.id}").json()["transcript_notes"] == []

@@ -543,6 +543,27 @@ function attributionBox(report) {
     <button type="button" id="declare-quotes" class="small">Dodaj do listy cytatów z mówcą z nagrania</button></div>`;
 }
 
+// Redaktor potwierdza, że cytat z tekstu należy do mówcy wskazanego przez transkrypcję.
+// Zapis uruchamia weryfikację od nowa na aktualnym tekście, więc lista nie może się rozjechać z treścią.
+function bindDeclareQuotes(root, currentDraft) {
+  root.querySelector("#declare-quotes")?.addEventListener("click", (e) => {
+    const m = state.material;
+    const draft = currentDraft();
+    const text = [...draft.title_options, draft.lead, ...draft.sections.flatMap((s) => [s.heading || "", ...s.paragraphs])].join("\n");
+    const known = new Set(draft.quotes.map((q) => `${q.text}|${q.speaker}`));
+    for (const q of m.report.inline_quotes.filter((c) => c.verified && !c.declared)) {
+      const key = `${q.text}|${q.speaker}`;
+      if (known.has(key) || !text.includes(q.text)) continue;
+      known.add(key);
+      draft.quotes.push({ text: q.text, speaker: q.speaker, timecode_seconds: q.found_at_seconds });
+    }
+    busy(e.target, "Zapisywanie…", async () => {
+      state.material = await api(`/api/materials/${m.id}/draft`, { method: "PUT", body: draft });
+      drawWorkspace();
+    });
+  });
+}
+
 function verificationBox(report) {
   if (!report) return "";
   if (report.ok) return `<div class="verify ok"><strong>✓ Weryfikacja przeszła.</strong> Wszystkie cytaty występują w transkrypcji, tezy mają wskazane źródła.</div>${attributionBox(report)}${formatBox(report)}`;
@@ -630,17 +651,7 @@ function drawDraft(root) {
     toast("Draft zatwierdzony");
   }));
   form.querySelector("#to-export").addEventListener("click", () => { state.tab = "export"; drawWorkspace(); });
-  root.querySelector("#declare-quotes")?.addEventListener("click", (e) => {
-    // Redaktor potwierdza, że cytat należy do mówcy wskazanego przez transkrypcję.
-    const draft = readDraft(form);
-    for (const q of m.report.inline_quotes.filter((c) => c.verified && !c.declared)) {
-      draft.quotes.push({ text: q.text, speaker: q.speaker, timecode_seconds: q.found_at_seconds });
-    }
-    busy(e.target, "Zapisywanie…", async () => {
-      state.material = await api(`/api/materials/${m.id}/draft`, { method: "PUT", body: draft });
-      drawWorkspace();
-    });
-  });
+  bindDeclareQuotes(root, () => readDraft(form));
   bindGoto(root);
   bindGenerator(root);
 }
@@ -724,6 +735,7 @@ async function drawExport(root) {
       <pre class="export" id="out"></pre>
     </div>`;
 
+  bindDeclareQuotes(root, () => structuredClone(m.draft));
   const out = root.querySelector("#out");
   let text = "";
   const refresh = async () => {

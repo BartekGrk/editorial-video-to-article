@@ -326,6 +326,8 @@ def create_app(
                     "status": MaterialStatus.NEW,
                     "job_stage": None,
                     "job_error": None,
+                    # Zastrzeżenia ASR dotyczyły poprzedniej wersji transkrypcji.
+                    "transcript_notes": [],
                 }
             )
         store.save(updated)
