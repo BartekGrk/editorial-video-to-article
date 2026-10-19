@@ -48,13 +48,14 @@ def test_full_flow_analyze_draft_edit_approve_export(client, material):
 
     # Redaktor dopisuje zmyślony cytat: weryfikacja blokuje zatwierdzenie i eksport.
     draft = drafted["draft"]
-    draft["sections"][0]["paragraphs"].append("Inny rozmówca: „Kaucja to najgorszy pomysł tego rządu”.")
+    original_lead = draft["lead"]
+    draft["lead"] += " Inny rozmówca: „Kaucja to najgorszy pomysł tego rządu”."
     edited = client.put(f"/api/materials/{mid}/draft", json=draft).json()
     assert edited["report"]["ok"] is False
     assert client.post(f"/api/materials/{mid}/approve").status_code == 409
     assert client.get(f"/api/materials/{mid}/export").status_code == 409
 
-    draft["sections"][0]["paragraphs"].pop()
+    draft["lead"] = original_lead
     assert client.put(f"/api/materials/{mid}/draft", json=draft).json()["report"]["ok"] is True
     assert client.post(f"/api/materials/{mid}/approve").json()["status"] == "APPROVED"
 
@@ -105,7 +106,12 @@ def test_style_profile_crud_and_use_in_draft(client, material):
     assert drafted["style_profile_id"] == pid
 
     assert client.delete(f"/api/style-profiles/{pid}").status_code == 204
-    assert client.get("/api/style-profiles").json() == []
+    assert [p["id"] for p in client.get("/api/style-profiles").json()] == ["wp-finanse"]
+
+
+def test_builtin_wp_style_is_default(client, material):
+    drafted = client.post(f"/api/materials/{material['id']}/draft", json={"mode": "SHORT"}).json()["material"]
+    assert drafted["style_profile_id"] == "wp-finanse"
 
 
 def test_list_and_delete_material(client, material):

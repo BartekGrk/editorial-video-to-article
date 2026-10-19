@@ -23,10 +23,14 @@ _INLINE_QUOTE = re.compile(r"„([^”\"]+)[”\"]|“([^”]+)”|\"([^\"]+)\""
 # Krótkie frazy w cudzysłowie to zwykle nazwy własne (programy, ustawy),
 # a nie cytaty; sprawdzamy tylko wypowiedzi od 4 słów.
 _MIN_INLINE_QUOTE_WORDS = 4
+# Konwencja WP Finanse: wypowiedź jako akapit z myślnikiem,
+# np. "- Treść wypowiedzi - mówi Jan Kowalski, rolnik."
+_DASH_PARAGRAPH = re.compile(r"^\s*[-–—]\s+")
+_DASH_SPLIT = re.compile(r"\s+[-–—]\s+")
 
-# Cytat może przechodzić na kolejną linię tej samej wypowiedzi;
-# szersze okno zwiększałoby ryzyko "sklejenia" cytatu z odległych zdań.
-_MAX_FOLLOWING_SEGMENTS = 2
+# Cytat może przechodzić na kolejne segmenty tej samej wypowiedzi (ASR tnie
+# mowę na odcinki po kilka sekund); szersze okno zwiększałoby ryzyko "sklejenia" cytatu z odległych zdań.
+_MAX_FOLLOWING_SEGMENTS = 3
 
 
 class QuoteStatus(str, Enum):
@@ -186,8 +190,25 @@ def find_quote(text: str, transcript: Transcript) -> int | None:
     return None
 
 
+def dash_quotes(paragraph: str) -> list[str]:
+    """Wypowiedzi z akapitu dialogowego "- cytat - mówi X. - Dalszy cytat."
+
+    Pierwszy fragment po myślniku to cytat. Kolejne fragmenty zaczynające się
+    małą literą to przypisanie ("mówi", "dodaje") i narracja; fragment od
+    wielkiej litery po zakończonym zdaniu to następna wypowiedź.
+    """
+    if not _DASH_PARAGRAPH.match(paragraph):
+        return []
+    parts = _DASH_SPLIT.split(_DASH_PARAGRAPH.sub("", paragraph, count=1))
+    quotes = [parts[0]]
+    for previous, part in zip(parts, parts[1:]):
+        if part[:1].isupper() and previous.rstrip().endswith((".", "!", "?", "…")):
+            quotes.append(part)
+    return [q.strip() for q in quotes if q.strip()]
+
+
 def extract_inline_quotes(draft: ArticleDraft) -> list[tuple[str, str]]:
-    """Pary (miejsce, cytat) dla wypowiedzi w cudzysłowie w tekście draftu."""
+    """Pary (miejsce, cytat) dla wypowiedzi w cudzysłowie lub po myślniku w tekście draftu."""
     places = [(f"tytuł {i}", t) for i, t in enumerate(draft.title_options, start=1)]
     places.append(("lead", draft.lead))
     for s_no, section in enumerate(draft.sections, start=1):
@@ -196,6 +217,10 @@ def extract_inline_quotes(draft: ArticleDraft) -> list[tuple[str, str]]:
     for location, text in places:
         for match in _INLINE_QUOTE.finditer(text):
             quoted = next(g for g in match.groups() if g is not None).strip()
+            if len(normalize(quoted).split()) >= _MIN_INLINE_QUOTE_WORDS:
+                found.append((location, quoted))
+        for quoted in dash_quotes(text):
+            # Cytat z myślnikiem może zawierać wtrącenia w cudzysłowie – sprawdzamy całość.
             if len(normalize(quoted).split()) >= _MIN_INLINE_QUOTE_WORDS:
                 found.append((location, quoted))
     return found

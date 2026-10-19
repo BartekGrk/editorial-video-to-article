@@ -21,8 +21,10 @@ ale nie poprawiaj gramatyki, nie łącz zdań różnych osób i nie dopisuj sł�
 potwierdzić samym nagraniem, oznacz `requires_verification: true`.
 - W `gaps` wypisz, czego transkrypcja nie mówi: kontekst widoczny tylko w obrazie, niejasnych mówców, \
 fragmenty wyglądające na błąd rozpoznawania mowy.
-- Zaproponuj tryb: SHORT (krótki tekst towarzyszący wideo) albo FULL (pełny artykuł). FULL tylko wtedy, \
-gdy materiał ma dość treści i wartości informacyjnej; nie rozbudowuj sztucznie.
+- Zaproponuj tryb: SHORT (krótki tekst pod wideo, jeden akapit) albo FULL (pełny artykuł). O trybie decyduje \
+wartość informacyjna, nie długość nagrania. FULL, gdy materiał niesie co najmniej trzy odrębne wątki \
+z konkretami (liczby, przepisy, historie bohaterów, sprzeczne stanowiska), które da się rozwinąć bez \
+dopisywania faktów. SHORT dla pojedynczej wypowiedzi, krótkiej relacji lub sondy z kilkoma podobnymi opiniami.
 - Pisz po polsku."""
 
 STYLE_SYSTEM = """Analizujesz przykładowe artykuły redakcji, aby opisać ich format jako jawny profil stylu. \
@@ -36,15 +38,20 @@ z nagrania wideo. Draft zredaguje i zatwierdzi człowiek.
 Twarde zasady:
 1. Opieraj się wyłącznie na transkrypcji i materiale dowodowym. Nie dodawaj faktów spoza nagrania. \
 Jeśli tekst potrzebuje tła, wpisz to jako uwagę w `editor_notes`, zamiast je wymyślać.
-2. Cytat w cudzysłowie „…” musi być dosłownym fragmentem transkrypcji. Każdy taki cytat \
-(także w tytule i leadzie) dodaj do `quotes` z mówcą i `timecode_seconds`. Parafrazy pisz bez cudzysłowu \
-i z przypisaniem („mówi”, „twierdzi”).
+2. Cytat musi być dosłownym fragmentem transkrypcji (możesz skrócić go wielokropkiem […]). Dozwolone formy: \
+fraza w cudzysłowie „…” wpleciona w zdanie albo osobny akapit dialogowy zaczynający się od myślnika: \
+"- Dosłowna wypowiedź - mówi Imię Nazwisko, funkcja." Każdy cytat (także w tytule i leadzie) dodaj do \
+`quotes` z mówcą i `timecode_seconds`. Parafrazy pisz bez cudzysłowu, z przypisaniem („Jak mówi…”, \
+„Jego zdaniem…”, „Podkreśla, że…”). Akapit zaczynający się od myślnika zawsze jest traktowany jako cytat.
 3. Relację rozmówcy przedstawiaj jako jego słowa, nie jako potwierdzony fakt. Tezy z liczbami, datami \
 i nazwiskami umieść w `claims` z `requires_verification: true` i wskazaniem `evidence_timecodes`.
-4. Tryb SHORT: tekst towarzyszący wideo, 2–3 tytuły, krótki lead, zwięzła treść (zwykle 1 sekcja bez \
-śródtytułu). Nie rozbudowuj przekazu ponad to, co jest w nagraniu.
-   Tryb FULL: 2–3 tytuły, lead, rozwinięcie ze śródtytułami, selektywnie dobrane cytaty. Długość \
-wynika z wartości informacyjnej materiału.
+4. Tryb SHORT: tekst pod wideo. 2–3 tytuły; `lead` to jedyny akapit tekstu (40–90 słów): sedno, \
+najważniejsze liczby, ewentualnie jeden krótki cytat. `sections` zostaw puste. Nie rozbudowuj przekazu.
+   Tryb FULL: 2–3 tytuły; `lead` 30–50 słów; potem sekcje: pierwsza bez śródtytułu (szerszy kontekst), \
+kolejne 2–5 ze śródtytułami opartymi na konkretach z materiału. Łącznie około 300–850 słów – długość \
+wynika z wartości informacyjnej, nie z limitu. Zakończ wypowiedzią podsumowującą lub tym, co dalej.
+   Rozmówcy, których nazwiska nie padają w nagraniu, opisz rolą („jeden z rozmówców”, „mieszkanka”); \
+nie wymyślaj nazwisk ani funkcji.
 5. Profil stylu opisuje format redakcji. Stosuj go, ale nie podszywaj się pod konkretnego autora.
 6. Pisz poprawną polszczyzną dziennikarską."""
 
@@ -107,3 +114,22 @@ def repair_prompt(request: DraftRequest, draft: ArticleDraft, problems: list[str
         f"{draft_prompt(request)}\n\n<draft>\n{json.dumps(draft.model_dump(mode='json'), ensure_ascii=False, indent=2)}\n</draft>"
         f"\n\nProblemy wykryte przez weryfikację:\n{listed}"
     )
+
+
+SPEAKERS_SYSTEM = """Otrzymujesz transkrypcję nagrania z automatycznego rozpoznawania mowy, podzieloną na \
+ponumerowane segmenty, bez oznaczenia mówców. Przypisz każdemu segmentowi mówcę na podstawie treści \
+(pytania reportera, przedstawienia się, zmiany perspektywy, zwroty do rozmówcy).
+
+Zasady:
+- Reporter/reporterka zadający pytania: "Reporter" lub "Reporterka".
+- Rozmówca, który się przedstawia lub jest przedstawiony: imię i nazwisko dokładnie jak w nagraniu, \
+opcjonalnie z funkcją po przecinku, np. "Jan Kowalski, rolnik".
+- Pozostali: "Rozmówca 1", "Rozmówczyni 2" itd., konsekwentnie w całym nagraniu.
+- Lektor lub narrator: "Lektor".
+- Gdy nie da się ustalić, użyj ostatniego pewnego mówcy i zaznacz segment w `uncertain_indices`.
+- Nie zmieniaj treści segmentów. Zwróć etykietę dla każdego numeru segmentu."""
+
+
+def speakers_prompt(material: MaterialInput) -> str:
+    lines = [f"{i}: {s.text}" for i, s in enumerate(material.transcript.segments)]
+    return f"{_material_header(material)}\n\n<segmenty>\n" + "\n".join(lines) + "\n</segmenty>"

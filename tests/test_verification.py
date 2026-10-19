@@ -82,3 +82,21 @@ def test_problems_lists_all_failures(draft, transcript):
     draft.claims.append(Claim(statement="Bez źródła"))
     problems = verify_draft(draft, transcript).problems()
     assert len(problems) == 2
+
+
+def test_dash_quotes_parsing():
+    from app.verification import dash_quotes
+
+    assert dash_quotes("- Ja nie oddaję - mówi rozmówca.") == ["Ja nie oddaję"]
+    assert dash_quotes("– Jedno zdanie. - mówi X. - Drugie zdanie tutaj.") == ["Jedno zdanie.", "Drugie zdanie tutaj."]
+    assert dash_quotes("- Cytat - mówiła jedna z osób. Narracja dalej - skandowali.") == ["Cytat"]
+    assert dash_quotes("Zwykły akapit - z myślnikiem w środku.") == []
+
+
+def test_dash_quote_paragraph_is_verified(draft, transcript):
+    draft.sections[0].paragraphs.append("- Za te trzydzieści groszy nie będę stać w kolejce - mówi przechodzień.")
+    assert verify_draft(draft, transcript).ok
+    draft.sections[0].paragraphs.append("- Za te pieniądze nigdy nie będę stać w kolejce - dodaje.")
+    report = verify_draft(draft, transcript)
+    assert not report.ok
+    assert [q.text for q in report.inline_quotes if not q.verified] == ["Za te pieniądze nigdy nie będę stać w kolejce"]

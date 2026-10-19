@@ -5,6 +5,7 @@ schemat danych zmienia się często, a zapytania ograniczają się do listy i
 odczytu po id. Plik bazy domyślnie w `data/` (poza repozytorium).
 """
 
+import json
 import sqlite3
 import threading
 import uuid
@@ -28,6 +29,8 @@ def _new_id() -> str:
 
 
 class MaterialStatus(str, Enum):
+    PROCESSING = "PROCESSING"
+    FAILED = "FAILED"
     NEW = "NEW"
     ANALYZED = "ANALYZED"
     DRAFTED = "DRAFTED"
@@ -41,7 +44,16 @@ class Material(BaseModel):
     topic: str = ""
     angle: str = ""
     video_url: str = ""
-    transcript_raw: str
+    # Pusta, dopóki automat nie skończy transkrypcji nagrania.
+    transcript_raw: str = ""
+    # False dla transkrypcji ASR bez mówców: wtedy "Słowo: tekst" nie jest etykietą mówcy.
+    transcript_has_speakers: bool = True
+    source: str = ""
+    media_file: str | None = None
+    job_stage: str | None = None
+    job_error: str | None = None
+    # Tytuł nadany automatycznie (z nazwy pliku/nagrania) zastępujemy pierwszą propozycją z draftu.
+    title_auto: bool = False
     # Zgoda na wysłanie treści do zewnętrznego API: materiał publiczny,
     # syntetyczny albo dopuszczony polityką redakcji.
     external_processing_allowed: bool = False
@@ -106,3 +118,17 @@ class Store:
         with self._lock, self._conn:
             cursor = self._conn.execute(f"DELETE FROM {_TABLES[model]} WHERE id = ?", (record_id,))
         return cursor.rowcount > 0
+
+
+# Wbudowane profile stylu (opis formatu, bez treści artykułów źródłowych).
+STYLES_DIR = Path(__file__).parent / "styles"
+DEFAULT_STYLE_ID = "wp-finanse"
+
+
+def seed_builtin_styles(store: Store) -> None:
+    """Dodaje wbudowane profile, jeśli ich nie ma; nie nadpisuje zmian redaktora."""
+    for path in sorted(STYLES_DIR.glob("*.json")):
+        record_id = path.stem.replace("_", "-")
+        if store.get(StyleProfileRecord, record_id) is None:
+            data = json.loads(path.read_text(encoding="utf-8"))
+            store.save(StyleProfileRecord(id=record_id, source_count=0, **data))

@@ -108,3 +108,15 @@ class EditorialStyleProfile(BaseModel):
     full_mode_notes: str = Field(description="Cechy pełnych artykułów")
     typical_title_words: int = Field(ge=1)
     typical_lead_words: int = Field(ge=1)
+
+
+class SpeakerLabel(BaseModel):
+    index: int = Field(ge=0, description="Numer segmentu")
+    speaker: str
+
+
+class SpeakerLabels(BaseModel):
+    """Mówcy przypisani segmentom transkrypcji ASR (która ich nie rozróżnia)."""
+
+    labels: list[SpeakerLabel]
+    uncertain_indices: list[int] = Field(default_factory=list)

@@ -3,4 +3,9 @@ fastapi
 httpx
 pydantic>=2
 pytest
+python-multipart
 uvicorn
+# Automat z nagrania (transkrypcja lokalna); wymaga też programu ffmpeg
+faster-whisper
+numpy
+yt-dlp

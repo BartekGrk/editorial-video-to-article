@@ -11,7 +11,7 @@ a weryfikacja cytatów zawsze jest deterministyczna i po stronie aplikacji.
 from dataclasses import dataclass, field
 from typing import Protocol
 
-from app.models import ArticleDraft, ArticleMode, EditorialStyleProfile, EvidencePack, Transcript
+from app.models import ArticleDraft, ArticleMode, EditorialStyleProfile, EvidencePack, SpeakerLabels, Transcript
 
 
 class EngineError(RuntimeError):
@@ -42,6 +42,10 @@ class Engine(Protocol):
     name: str
     # Czy silnik wysyła treść do zewnętrznego API (wymaga zgody na przetwarzanie).
     external: bool
+
+    def label_speakers(self, material: MaterialInput) -> SpeakerLabels | None:
+        """Mówcy dla transkrypcji bez etykiet; None, gdy silnik tego nie potrafi."""
+        ...
 
     def extract_evidence(self, material: MaterialInput) -> EvidencePack: ...
 

@@ -14,7 +14,7 @@ from pydantic import BaseModel, ValidationError
 
 from app.engines import prompts
 from app.engines.base import DraftRequest, EngineError, MaterialInput
-from app.models import ArticleDraft, EditorialStyleProfile, EvidencePack
+from app.models import ArticleDraft, EditorialStyleProfile, EvidencePack, SpeakerLabels
 
 DEFAULT_MODEL = "claude-opus-5-5"
 # Serwerowy fallback przy odmowie klasyfikatora bezpieczeństwa: zamiast pustej
@@ -66,6 +66,9 @@ class AnthropicEngine:
         if response.parsed_output is None:
             raise EngineError("Model nie zwrócił danych w oczekiwanym formacie")
         return response.parsed_output
+
+    def label_speakers(self, material: MaterialInput) -> SpeakerLabels:
+        return self._call(prompts.SPEAKERS_SYSTEM, prompts.speakers_prompt(material), SpeakerLabels, "low")
 
     def extract_evidence(self, material: MaterialInput) -> EvidencePack:
         return self._call(prompts.EVIDENCE_SYSTEM, prompts.evidence_prompt(material), EvidencePack, "medium")

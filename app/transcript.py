@@ -39,7 +39,8 @@ def format_timecode(seconds: int) -> str:
     return f"{hours:02d}:{minutes:02d}:{secs:02d}"
 
 
-def parse_transcript(raw: str) -> Transcript:
+def parse_transcript(raw: str, with_speakers: bool = True) -> Transcript:
+    """`with_speakers=False` dla transkrypcji ASR bez mówców: dwukropek w zdaniu nie jest wtedy etykietą."""
     segments: list[TranscriptSegment] = []
     for line_no, line in enumerate(raw.splitlines(), start=1):
         line = line.strip()
@@ -58,7 +59,7 @@ def parse_transcript(raw: str) -> Transcript:
         if segments and start < segments[-1].start_seconds:
             raise TranscriptParseError(f"Linia {line_no}: znaczniki czasu nie rosną")
         rest = match["rest"]
-        speaker_match = _SPEAKER.match(rest)
+        speaker_match = _SPEAKER.match(rest) if with_speakers else None
         if speaker_match:
             speaker, text = speaker_match["speaker"].strip(), speaker_match["text"]
         else:
@@ -68,3 +69,12 @@ def parse_transcript(raw: str) -> Transcript:
     if not segments:
         raise TranscriptParseError("Pusta transkrypcja")
     return Transcript(segments=segments)
+
+
+def build_transcript_raw(segments: list[TranscriptSegment]) -> str:
+    """Odwrotność parsera: segmenty → tekst w formacie `[hh:mm:ss] Mówca: treść`."""
+    lines = []
+    for segment in segments:
+        speaker = f"{segment.speaker}: " if segment.speaker else ""
+        lines.append(f"[{format_timecode(segment.start_seconds)}] {speaker}{segment.text}")
+    return "\n".join(lines)

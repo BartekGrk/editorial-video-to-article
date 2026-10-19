@@ -1,0 +1,18 @@
+{
+  "name": "WP Finanse – teksty wideo",
+  "description": "Wbudowany profil opracowany na podstawie analizy 24 publicznych tekstów z finanse.wp.pl/tag/wideo (2026). Zawiera wyłącznie opis formatu.",
+  "profile": {
+    "title_style": "6–12 słów, zwykle dwuczłonowy: krótka teza lub obserwacja + cytat w cudzysłowie albo puenta, np. schemat „Teza. „Krótki cytat rozmówcy””, „Pytanie? Pytamy mieszkańców”, „Byliśmy na miejscu”. Konkret (liczba, miejsce, grupa) zamiast ogólników; emocja wyrażona słowami rozmówców, nie przymiotnikami autora.",
+    "lead_style": "Pierwszy akapit od razu podaje sedno: kto, co, gdzie i najważniejsza liczba (kwota, procent, liczba osób). 30–50 słów w pełnym artykule. Często wskazuje, że materiał to relacja reportera WP (np. „Reporter WP sprawdził…”, „Reporterka WP zapytała przechodniów…”).",
+    "paragraph_style": "Krótkie akapity po 2–4 zdania (40–80 słów), zdania proste, informacyjne. Liczby zapisywane cyframi z jednostką („12 tys. zł”, „8 proc.”, „3–4 tony z hektara”).",
+    "subheading_style": "W pełnym artykule 2–5 śródtytułów, co 2–4 akapity. Śródtytuł to konkret z materiału: liczba, krótki cytat w cudzysłowie albo rzeczowa informacja (np. „800 zł więcej za ten sam koszyk”, „Ile to kosztuje?”). Krótki tekst wideo nie ma śródtytułów.",
+    "quote_style": "Dłuższe wypowiedzi jako osobny akapit dialogowy: „- Treść wypowiedzi - mówi Imię Nazwisko, funkcja.”; czasowniki: mówi, dodaje, podkreśla, ocenia, wylicza w nagraniu, podsumowuje, przyznaje. Krótkie frazy wplecione w zdanie w cudzysłowie. Poza cytatami dużo mowy zależnej: „Jak mówi…”, „Jego zdaniem…”, „Podkreśla, że…”. Cytaty wybierane oszczędnie – 1–5 w pełnym artykule, 0–1 w krótkim.",
+    "tone": "Rzeczowy, reporterski, przystępny; bez ocen autora. Emocje i oceny pochodzą od rozmówców. Lekko potoczne sformułowania dopuszczalne w tytule, nie w treści.",
+    "context_style": "Kontekst (przepisy, dane, wcześniejsze wypowiedzi) w osobnych akapitach i wyraźnie przypisany źródłu („Z danych przytoczonych w materiale wynika…”). Tło spoza nagrania dodaje redaktor – w drafcie zaznacz je jako uwagę, nie wymyślaj.",
+    "multi_speaker_style": "Bohaterów przedstawia się imieniem i nazwiskiem lub imieniem oraz rolą („mieszkanka Poznania”, „radny”, „sadownik z …”). W sondach rozmówcy anonimowi: „Jeden z rozmówców…”, „Inny odpowiada…”, „Kolejna rozmówczyni…”; wypowiedzi grupowane według stanowisk (za / przeciw / warunkowo).",
+    "short_mode_notes": "Tekst pod wideo to zwykle JEDEN akapit 40–90 słów (czasem 2–3 krótkie): sedno, najważniejsze liczby i ewentualnie jeden krótki cytat lub zestaw krótkich opinii w cudzysłowie. Bez śródtytułów, bez wstępu i podsumowania.",
+    "full_mode_notes": "Pełny artykuł 300–850 słów: lead (30–50 słów), akapit szerszego kontekstu, następnie sekcje ze śródtytułami prowadzone przez kolejnych bohaterów lub wątki, z akapitami dialogowymi. Kończy się wypowiedzią podsumowującą lub perspektywą (co dalej), bez morału autora.",
+    "typical_title_words": 9,
+    "typical_lead_words": 40
+  }
+}

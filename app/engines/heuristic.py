@@ -25,6 +25,11 @@ from app.verification import normalize
 _SENTENCE = re.compile(r"(?<=[.!?])\s+")
 # Prowadzący zadaje pytania; jego słowa nie są wypowiedziami rozmówców do cytowania.
 _HOST = re.compile(r"reporter|redaktor|prowadząc|dziennikar|lektor", re.IGNORECASE)
+# Formułki prowadzącego (powitania, przedstawianie gościa) – nie są wypowiedziami do cytowania.
+_HOST_PHRASES = re.compile(
+    r"\b(?:moim gościem|naszym gościem|dzień dobry|dziękuję za (?:rozmowę|zaproszenie)|witam|zapraszam)\b",
+    re.IGNORECASE,
+)
 _NUMERIC = re.compile(
     r"\d|\b(?:tysiąc|tysięcy|milion|miliard|procent|złotych|zł|groszy|euro|dolarów)\w*", re.IGNORECASE
 )
@@ -32,6 +37,59 @@ _NUMERIC = re.compile(
 _FULL_MODE_MIN_WORDS = 400
 _MIN_QUOTE_WORDS = 5
 _DEMO_NOTE = "Draft z trybu demonstracyjnego (bez AI): szablon z dosłownych wypowiedzi do dalszej redakcji."
+
+
+_MAX_TITLE_QUOTE_WORDS = 8
+_SHORT_MAX_WORDS = 90
+_MAX_THREADS = 4
+
+
+def _subject(material: MaterialInput) -> str:
+    return (material.title or material.topic or "Materiał wideo").rstrip(" .?!:")
+
+
+def _who(quote: Quote, capital: bool = False) -> str:
+    who = quote.speaker or "rozmówca"
+    return who[:1].upper() + who[1:] if capital else who
+
+
+def _attribution(quote: Quote) -> str:
+    return f"mówi {quote.speaker}" if quote.speaker else "słyszymy w nagraniu"
+
+
+def _threads(guests: list[TranscriptSegment], quotes: list[Quote]) -> list[Thread]:
+    """Wątki: osobno dla każdego rozpoznanego rozmówcy albo kolejne części nagrania."""
+    named = OrderedDict()
+    for segment in guests:
+        if segment.speaker:
+            named.setdefault(segment.speaker, []).append(segment)
+    if len(named) >= 2:
+        groups = list(named.items())
+    else:
+        # Bez mówców dzielimy nagranie na zbliżone objętościowo części w kolejności czasu.
+        total = sum(_words(s.text) for s in guests) or 1
+        size = total / min(_MAX_THREADS, max(1, len(quotes) // 2))
+        chunks, current, count = [], [], 0
+        for segment in guests:
+            current.append(segment)
+            count += _words(segment.text)
+            if count >= size * (len(chunks) + 1):
+                chunks.append(current)
+                current = []
+        if current:
+            chunks.append(current)
+        groups = [(None, chunk) for chunk in chunks]
+
+    threads = []
+    for name, items in groups:
+        times = [s.start_seconds for s in items]
+        first = next((q for q in quotes if q.timecode_seconds in times), None)
+        if first is None:
+            continue
+        # Śródtytuł z pierwszych słów wypowiedzi – szablon do zmiany przez redaktora.
+        heading = name or " ".join(first.text.split()[:6]).rstrip(",;:") + "…"
+        threads.append(Thread(name=heading, summary=first.text, timecodes=times))
+    return threads
 
 
 def _is_host(segment: TranscriptSegment) -> bool:
@@ -50,33 +108,29 @@ class HeuristicEngine:
     name = "heuristic"
     external = False
 
+    def label_speakers(self, material: MaterialInput) -> None:
+        # Bez modelu językowego nie odróżnimy mówców w surowej transkrypcji ASR.
+        return None
+
     def extract_evidence(self, material: MaterialInput) -> EvidencePack:
         segments = material.transcript.segments
         guests = [s for s in segments if not _is_host(s)]
 
-        by_speaker: OrderedDict[str, list[TranscriptSegment]] = OrderedDict()
-        for segment in guests:
-            by_speaker.setdefault(segment.speaker or "Mówca nieznany", []).append(segment)
-
-        threads = [
-            Thread(
-                name=speaker,
-                summary=_sentences(items[0].text)[0],
-                timecodes=[s.start_seconds for s in items],
-            )
-            for speaker, items in by_speaker.items()
-        ]
-
         quotes, claims = [], []
         for segment in guests:
             sentences = _sentences(segment.text)
-            quotable = [s for s in sentences if _words(s) >= _MIN_QUOTE_WORDS]
+            # Pytania to zwykle słowa prowadzącego (w ASR bez mówców nie da się go odfiltrować inaczej).
+            quotable = [
+                s
+                for s in sentences
+                if _words(s) >= _MIN_QUOTE_WORDS and not s.endswith("?") and not _HOST_PHRASES.search(s)
+            ]
             if quotable:
                 quotes.append(
                     Quote(text=quotable[0].rstrip("."), speaker=segment.speaker, timecode_seconds=segment.start_seconds)
                 )
             for sentence in sentences:
-                if _NUMERIC.search(sentence):
+                if _NUMERIC.search(sentence) and not sentence.endswith("?"):
                     claims.append(
                         Claim(
                             statement=sentence,
@@ -86,24 +140,26 @@ class HeuristicEngine:
                         )
                     )
 
+        threads = _threads(guests, quotes)
         guest_words = sum(_words(s.text) for s in guests)
-        mode = ArticleMode.FULL if guest_words >= _FULL_MODE_MIN_WORDS else ArticleMode.SHORT
-        speakers = len(by_speaker)
+        mode = ArticleMode.FULL if guest_words >= _FULL_MODE_MIN_WORDS and len(quotes) >= 4 else ArticleMode.SHORT
+        named = {s.speaker for s in guests if s.speaker}
         gaps = ["Tryb demonstracyjny: analiza regułowa, bez rozumienia treści."]
         if any(s.speaker is None for s in segments):
             gaps.append("Część segmentów nie ma przypisanego mówcy.")
 
+        voices = f"{len(named)} rozmówców" if named else "rozmówcy bez rozpoznanych nazwisk"
         return EvidencePack(
-            summary=(
-                # Bez cudzysłowu: weryfikator traktuje tekst w „…” jako cytat.
-                f"{material.title.rstrip('.?!:')}: {speakers} rozmówców, {len(segments)} segmentów, "
-                f"około {guest_words} słów wypowiedzi."
-            ),
+            # Bez cudzysłowu: weryfikator traktuje tekst w „…” jako cytat.
+            summary=f"{_subject(material)}. W nagraniu: {voices}, około {guest_words} słów wypowiedzi.",
             threads=threads,
             quotes=quotes,
             claims=claims,
             suggested_mode=mode,
-            mode_rationale=f"{guest_words} słów wypowiedzi rozmówców (próg FULL: {_FULL_MODE_MIN_WORDS}).",
+            mode_rationale=(
+                f"{guest_words} słów wypowiedzi i {len(quotes)} cytatów "
+                f"(próg FULL: {_FULL_MODE_MIN_WORDS} słów i 4 cytaty)."
+            ),
             gaps=gaps,
         )
 
@@ -145,33 +201,45 @@ class HeuristicEngine:
 
     def write_draft(self, request: DraftRequest) -> ArticleDraft:
         evidence, material = request.evidence, request.material
-        limit = 3 if request.mode == ArticleMode.SHORT else 8
-        quotes = evidence.quotes[:limit]
-        topic = material.topic or material.title
+        quotes = evidence.quotes
+        subject = _subject(material)
 
-        titles = [material.title, f"{topic}: co mówią rozmówcy"]
+        short_quotes = [q for q in quotes if _words(q.text) <= _MAX_TITLE_QUOTE_WORDS]
+        titles = [subject]
+        if short_quotes:
+            titles.append(f"{subject}. „{short_quotes[0].text}”")
+        titles.append(f"{material.topic or subject}: wideo")
+        titles = list(dict.fromkeys(titles))
+        if len(titles) < 2:
+            titles.append(f"{subject} – relacja wideo")
+
+        lead = f"{subject} – materiał wideo."
         if quotes:
-            titles.append(f"„{quotes[0].text}”")
-
-        def quote_paragraph(quote: Quote) -> str:
-            who = quote.speaker or "Rozmówca"
-            return f"{who} mówi: „{quote.text}”."
+            lead += f" {_who(quotes[0], capital=True)} w nagraniu: „{quotes[0].text}”."
 
         if request.mode == ArticleMode.SHORT:
-            sections = [Section(paragraphs=[quote_paragraph(q) for q in quotes] or [evidence.summary])]
+            if len(quotes) > 1 and _words(lead) + _words(quotes[1].text) <= _SHORT_MAX_WORDS:
+                lead += f" {_who(quotes[1], capital=True)}: „{quotes[1].text}”."
+            sections: list[Section] = []
+            used = quotes[:2]
         else:
             sections = []
+            used = quotes[:1]
             for thread in evidence.threads:
-                thread_quotes = [q for q in quotes if q.speaker == thread.name]
-                paragraphs = [quote_paragraph(q) for q in thread_quotes] or [thread.summary]
-                sections.append(Section(heading=thread.name, paragraphs=paragraphs))
+                thread_quotes = [q for q in quotes if q.timecode_seconds in thread.timecodes and q not in used][:3]
+                if not thread_quotes:
+                    continue
+                used += thread_quotes
+                sections.append(
+                    Section(heading=thread.name, paragraphs=[f"- {q.text} - {_attribution(q)}." for q in thread_quotes])
+                )
 
         return ArticleDraft(
             mode=request.mode,
             title_options=titles[:3],
-            lead=evidence.summary,
+            lead=lead,
             sections=sections,
-            quotes=quotes,
+            quotes=used,
             claims=evidence.claims,
             editor_notes=[_DEMO_NOTE, *evidence.gaps],
         )

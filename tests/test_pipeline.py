@@ -40,13 +40,13 @@ class _FabricatingEngine(HeuristicEngine):
 
     def write_draft(self, request):
         draft = super().write_draft(request)
-        draft.sections[0].paragraphs.append("„To jest wymyślona wypowiedź rozmówcy”.")
+        draft.lead += " „To jest wymyślona wypowiedź rozmówcy”."
         return draft
 
     def repair_draft(self, request, draft, problems):
         self.repair_calls += 1
         assert any("wymyślona" in p for p in problems)
-        draft.sections[0].paragraphs.pop()
+        draft.lead = draft.lead.replace(" „To jest wymyślona wypowiedź rozmówcy”.", "")
         return draft
 
 

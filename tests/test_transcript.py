@@ -37,3 +37,15 @@ def test_rejects_invalid_minutes():
 
 def test_format_timecode():
     assert format_timecode(3723) == "01:02:03"
+
+
+def test_without_speakers_colon_stays_in_text():
+    transcript = parse_transcript("[00:05] Uwaga: to ważne", with_speakers=False)
+    assert transcript.segments[0].speaker is None
+    assert transcript.segments[0].text == "Uwaga: to ważne"
+
+
+def test_build_transcript_raw_roundtrip(transcript, raw_transcript):
+    from app.transcript import build_transcript_raw
+
+    assert parse_transcript(build_transcript_raw(transcript.segments)) == transcript
