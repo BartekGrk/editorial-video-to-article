@@ -118,3 +118,23 @@ def test_format_warnings_for_long_short_text(draft):
     warnings = format_warnings(full)
     assert any("śródtytułów" in w for w in warnings)
     assert any("myślnikiem" in w for w in warnings)
+
+
+def test_segments_starting_in_same_second_are_all_cited():
+    from app.models import Transcript, TranscriptSegment
+
+    t = Transcript(
+        segments=[
+            TranscriptSegment(start_seconds=5, speaker="A", text="Pierwsze zdanie tutaj jest."),
+            TranscriptSegment(start_seconds=5, speaker="B", text="Drugie zdanie od kogoś innego."),
+        ]
+    )
+    first = check_quote(Quote(text="Pierwsze zdanie tutaj jest", speaker="A", timecode_seconds=5), t)
+    second = check_quote(Quote(text="Drugie zdanie od kogoś", speaker="B", timecode_seconds=5), t)
+    assert (first.status, first.segment_index) == (QuoteStatus.VERIFIED, 0)
+    assert (second.status, second.segment_index) == (QuoteStatus.VERIFIED, 1)
+
+
+def test_short_dash_quote_is_checked(draft, transcript):
+    draft.sections[0].paragraphs.append("- Nigdy więcej - mówi rozmówca.")
+    assert not verify_draft(draft, transcript).ok

@@ -14,7 +14,7 @@ import shutil
 from importlib.util import find_spec
 from pathlib import Path
 
-from fastapi import Depends, FastAPI, File, Form, HTTPException, Request, UploadFile
+from fastapi import Depends, FastAPI, File, Form, HTTPException, Query, Request, UploadFile
 from fastapi.responses import FileResponse, PlainTextResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
@@ -406,7 +406,10 @@ def create_app(
 
     @app.get("/api/materials/{material_id}/export")
     def export(
-        format: str = "md", control: bool = True, title: int = 0, material: Material = Depends(get_material)
+        format: str = "md",
+        control: bool = True,
+        title: int = Query(0, ge=0, le=2),
+        material: Material = Depends(get_material),
     ) -> PlainTextResponse:
         if material.draft is None:
             raise HTTPException(status_code=404, detail="Materiał nie ma jeszcze draftu")
@@ -482,8 +485,15 @@ def create_app(
             # Nazwa pliku od użytkownika służy tylko do rozszerzenia – nie do ścieżki.
             suffix = "".join(c for c in Path(file.filename).suffix.lower() if c.isalnum() or c == ".")[:10]
             target = workdir / f"upload{suffix}"
+            limit = int(os.environ.get("EDITORIAL_MAX_UPLOAD_MB", "2048")) * 1024 * 1024
+            written = 0
             with target.open("wb") as handle:
                 while chunk := await file.read(1024 * 1024):
+                    written += len(chunk)
+                    if written > limit:
+                        handle.close()
+                        shutil.rmtree(workdir, ignore_errors=True)
+                        raise HTTPException(status_code=413, detail=f"Plik większy niż {limit // 1024 // 1024} MB")
                     handle.write(chunk)
             source = str(target)
         store.save(material)

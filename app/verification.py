@@ -44,6 +44,7 @@ class QuoteCheck(BaseModel):
     quote: Quote
     status: QuoteStatus
     found_at_seconds: int | None = None
+    segment_index: int | None = None
     message: str
 
 
@@ -146,28 +147,39 @@ def check_quote(quote: Quote, transcript: Transcript) -> QuoteCheck:
 
     segments = transcript.segments
     cited = segment_at(transcript, quote.timecode_seconds)
-    if cited is not None and _contains_in_order(_window_text(segments, cited), fragments):
-        segment = segments[cited]
-        if segment.speaker is None or _same_speaker(quote.speaker, segment.speaker):
+    # Kilka segmentów ASR może zaczynać się w tej samej sekundzie – wszystkie są "wskazane".
+    candidates = (
+        [i for i, s in enumerate(segments) if s.start_seconds == segments[cited].start_seconds]
+        if cited is not None
+        else []
+    )
+    matches = [i for i in candidates if _contains_in_order(_window_text(segments, i), fragments)]
+    if matches:
+        verified = [i for i in matches if segments[i].speaker is None or _same_speaker(quote.speaker, segments[i].speaker)]
+        if verified:
             return QuoteCheck(
                 quote=quote,
                 status=QuoteStatus.VERIFIED,
-                found_at_seconds=segment.start_seconds,
+                found_at_seconds=segments[verified[0]].start_seconds,
+                segment_index=verified[0],
                 message="Cytat zgodny z transkrypcją",
             )
+        segment = segments[matches[0]]
         return QuoteCheck(
             quote=quote,
             status=QuoteStatus.SPEAKER_MISMATCH,
             found_at_seconds=segment.start_seconds,
+            segment_index=matches[0],
             message=f"W transkrypcji mówi: {segment.speaker}, w drafcie: {quote.speaker or 'brak'}",
         )
 
     for i, segment in enumerate(segments):
-        if i != cited and _contains_in_order(_window_text(segments, i), fragments):
+        if i not in candidates and _contains_in_order(_window_text(segments, i), fragments):
             return QuoteCheck(
                 quote=quote,
                 status=QuoteStatus.TIMECODE_MISMATCH,
                 found_at_seconds=segment.start_seconds,
+                segment_index=i,
                 message=(
                     f"Cytat występuje w {format_timecode(segment.start_seconds)}, "
                     f"a nie w {format_timecode(quote.timecode_seconds)}"
@@ -222,8 +234,9 @@ def extract_inline_quotes(draft: ArticleDraft) -> list[tuple[str, str]]:
             if len(normalize(quoted).split()) >= _MIN_INLINE_QUOTE_WORDS:
                 found.append((location, quoted))
         for quoted in dash_quotes(text):
-            # Cytat z myślnikiem może zawierać wtrącenia w cudzysłowie – sprawdzamy całość.
-            if len(normalize(quoted).split()) >= _MIN_INLINE_QUOTE_WORDS:
+            # Akapit z myślnikiem to zawsze wypowiedź (nie nazwa własna), więc sprawdzamy
+            # też najkrótsze; może zawierać wtrącenia w cudzysłowie – sprawdzamy całość.
+            if normalize(quoted):
                 found.append((location, quoted))
     return found
 

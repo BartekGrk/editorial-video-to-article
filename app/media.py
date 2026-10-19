@@ -10,8 +10,10 @@ Zależności (yt-dlp, faster-whisper, ffmpeg) importujemy leniwie: aplikacja
 działa bez nich, dopóki nikt nie uruchomi przetwarzania nagrania.
 """
 
+import ipaddress
 import os
 import shutil
+import socket
 import subprocess
 import threading
 from dataclasses import dataclass
@@ -45,6 +47,29 @@ def is_url(source: str) -> bool:
     return urlparse(source).scheme in ("http", "https")
 
 
+def ensure_public_host(url: str) -> None:
+    """Blokuje linki do adresów wewnętrznych (localhost, sieci prywatne).
+
+    Serwer pobiera nagranie w imieniu użytkownika, więc bez tej kontroli link
+    mógłby posłużyć do odpytywania usług w sieci wewnętrznej. Przekierowania
+    obsługiwane przez yt-dlp nie są tu sprawdzane – to ograniczenie prototypu.
+    Wyłączenie (np. dla nagrań z wewnętrznego serwera): EDITORIAL_ALLOW_PRIVATE_URLS=1.
+    """
+    if os.environ.get("EDITORIAL_ALLOW_PRIVATE_URLS") == "1":
+        return
+    host = urlparse(url).hostname
+    if not host:
+        raise MediaError("Nieprawidłowy link")
+    try:
+        addresses = {info[4][0] for info in socket.getaddrinfo(host, None)}
+    except socket.gaierror as error:
+        raise MediaError(f"Nie można odnaleźć serwera: {host}") from error
+    for address in addresses:
+        ip = ipaddress.ip_address(address.split("%")[0])
+        if not ip.is_global:
+            raise MediaError(f"Link wskazuje adres wewnętrzny ({host}) – pobieranie zablokowane")
+
+
 def fetch_media(source: str, workdir: Path) -> FetchedMedia:
     workdir.mkdir(parents=True, exist_ok=True)
     if not is_url(source):
@@ -53,6 +78,7 @@ def fetch_media(source: str, workdir: Path) -> FetchedMedia:
             raise MediaError(f"Nie ma pliku: {source}")
         return FetchedMedia(path=path, title=path.stem.replace("_", " "))
 
+    ensure_public_host(source)
     try:
         import yt_dlp
     except ImportError as error:  # pragma: no cover - zależność opcjonalna

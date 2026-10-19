@@ -186,3 +186,26 @@ def test_interrupted_jobs_are_marked_failed(raw_transcript):
     store.save(Material(title="x", transcript_raw=raw_transcript, status=MaterialStatus.PROCESSING))
     create_app(store, HeuristicEngine(), FakeTranscriber(), InlineRunner())
     assert store.list(Material)[0].status == MaterialStatus.FAILED
+
+
+def test_private_urls_are_blocked(monkeypatch, tmp_path):
+    from app.media import MediaError, fetch_media
+
+    monkeypatch.delenv("EDITORIAL_ALLOW_PRIVATE_URLS", raising=False)
+    for url in ("http://127.0.0.1:8000/a.mp4", "http://localhost/a.mp4", "http://10.0.0.5/a.mp4"):
+        with pytest.raises(MediaError, match="wewnętrzny"):
+            fetch_media(url, tmp_path)
+
+
+def test_upload_size_limit(auto_client, monkeypatch):
+    monkeypatch.setenv("EDITORIAL_MAX_UPLOAD_MB", "0")
+    client = auto_client()
+    response = client.post("/api/auto", files={"file": ("a.wav", _wav_bytes(), "audio/wav")})
+    assert response.status_code == 413
+    assert client.get("/api/materials").json() == []
+
+
+def test_export_rejects_negative_title(client, raw_transcript):
+    mid = client.post("/api/materials", json={"title": "x", "transcript_raw": raw_transcript}).json()["id"]
+    client.post(f"/api/materials/{mid}/draft", json={"mode": "SHORT"})
+    assert client.get(f"/api/materials/{mid}/export?format=html&title=-1").status_code == 422

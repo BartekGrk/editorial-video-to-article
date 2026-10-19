@@ -36,7 +36,7 @@ def sanitize_evidence(evidence: EvidencePack, transcript: Transcript) -> Evidenc
             rejected.append(quote.text)
             continue
         # Tekst istnieje dosłownie, więc transkrypcja jest źródłem prawdy o tym, kto i kiedy to powiedział.
-        segment = next(s for s in transcript.segments if s.start_seconds == check.found_at_seconds)
+        segment = transcript.segments[check.segment_index]
         fixed = quote.model_copy(update={"speaker": segment.speaker, "timecode_seconds": segment.start_seconds})
         key = (fixed.text, fixed.timecode_seconds)
         if key not in seen:
@@ -61,13 +61,30 @@ def sanitize_evidence(evidence: EvidencePack, transcript: Transcript) -> Evidenc
     return evidence.model_copy(update={"quotes": quotes, "claims": claims, "gaps": gaps})
 
 
+def fix_quote_timecodes(draft: ArticleDraft, transcript: Transcript) -> ArticleDraft:
+    """Poprawia timecode cytatów, których tekst występuje dosłownie gdzie indziej.
+
+    To bezpieczna, mechaniczna korekta (tekst i mówca się zgadzają). Błędny mówca
+    wymaga poprawy treści ("mówi X"), więc ten przypadek zostaje do poprawki przez model.
+    """
+    quotes = []
+    for quote in draft.quotes:
+        check = check_quote(quote, transcript)
+        if check.status == QuoteStatus.TIMECODE_MISMATCH:
+            segment = transcript.segments[check.segment_index]
+            if segment.speaker is None or quote.speaker == segment.speaker:
+                quote = quote.model_copy(update={"timecode_seconds": segment.start_seconds})
+        quotes.append(quote)
+    return draft.model_copy(update={"quotes": quotes})
+
+
 def analyze(engine: Engine, material: MaterialInput) -> EvidencePack:
     return sanitize_evidence(engine.extract_evidence(material), material.transcript)
 
 
 def write(engine: Engine, request: DraftRequest) -> DraftResult:
     transcript = request.material.transcript
-    draft = engine.write_draft(request)
+    draft = fix_quote_timecodes(engine.write_draft(request), transcript)
     report = verify_draft(draft, transcript)
     # Model językowy poprawia też wyraźne odstępstwa od formatu; regułowy silnik
     # nie umie przeredagować tekstu, więc dla niego poprawka dotyczy tylko błędów.
@@ -76,7 +93,7 @@ def write(engine: Engine, request: DraftRequest) -> DraftResult:
         return DraftResult(draft=draft, report=report, repaired=False, first_report=report)
 
     # Jedna runda poprawki: więcej rund rzadko pomaga, a mnoży koszt i czas.
-    repaired = engine.repair_draft(request, draft, problems)
+    repaired = fix_quote_timecodes(engine.repair_draft(request, draft, problems), transcript)
     return DraftResult(
         draft=repaired, report=verify_draft(repaired, transcript), repaired=True, first_report=report
     )

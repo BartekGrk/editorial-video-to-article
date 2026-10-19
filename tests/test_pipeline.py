@@ -63,3 +63,9 @@ def test_video_link():
     assert pipeline.video_link("https://youtu.be/x", 12) == "https://youtu.be/x?t=12"
     assert pipeline.video_link("https://cdn.example/v.mp4#t=3", 12) == "https://cdn.example/v.mp4#t=12"
     assert pipeline.video_link("", 12) is None
+
+
+def test_fix_quote_timecodes_moves_exact_quote(transcript, draft):
+    draft.quotes[1] = draft.quotes[1].model_copy(update={"timecode_seconds": 5})
+    fixed = pipeline.fix_quote_timecodes(draft, transcript)
+    assert fixed.quotes[1].timecode_seconds == 31
