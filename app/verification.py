@@ -66,6 +66,8 @@ class VerificationReport(BaseModel):
     quotes: list[QuoteCheck]
     claims: list[ClaimCheck]
     inline_quotes: list[InlineQuoteCheck] = []
+    # Odstępstwa od formatu redakcji – informacja dla redaktora, nie blokują eksportu.
+    format_warnings: list[str] = []
 
     @computed_field
     @property
@@ -241,6 +243,13 @@ def check_inline_quotes(draft: ArticleDraft, transcript: Transcript) -> list[Inl
     return checks
 
 
+def _format_warnings(draft: ArticleDraft) -> list[str]:
+    # Import w funkcji: format_check korzysta z dash_quotes z tego modułu.
+    from app.format_check import format_warnings
+
+    return format_warnings(draft)
+
+
 def verify_draft(draft: ArticleDraft, transcript: Transcript) -> VerificationReport:
     end = transcript.segments[-1].start_seconds
     claim_checks: list[ClaimCheck] = []
@@ -264,4 +273,5 @@ def verify_draft(draft: ArticleDraft, transcript: Transcript) -> VerificationRep
         quotes=[check_quote(q, transcript) for q in draft.quotes],
         claims=claim_checks,
         inline_quotes=check_inline_quotes(draft, transcript),
+        format_warnings=_format_warnings(draft),
     )

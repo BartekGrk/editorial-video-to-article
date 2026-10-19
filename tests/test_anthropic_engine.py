@@ -5,7 +5,7 @@ from types import SimpleNamespace
 import pytest
 
 from app.engines import DraftRequest, EngineError, MaterialInput
-from app.engines.anthropic_engine import AnthropicEngine
+from app.engines.anthropic_engine import AnthropicEngine, DraftOutput
 from app.models import ArticleMode, EvidencePack
 
 
@@ -15,7 +15,16 @@ class _FakeMessages:
 
     def parse(self, **kwargs):
         self.calls.append(kwargs)
-        return SimpleNamespace(stop_reason=self.stop_reason, parsed_output=self.output)
+        output = self.output.pop(0) if isinstance(self.output, list) else self.output
+        if isinstance(output, Exception):
+            raise output
+        return SimpleNamespace(stop_reason=self.stop_reason, parsed_output=output)
+
+
+def _draft_output(draft, **overrides):
+    data = draft.model_dump(exclude={"mode"})
+    data.update(overrides)
+    return DraftOutput(**data)
 
 
 def _engine(output, stop_reason="end_turn"):
@@ -43,7 +52,7 @@ def test_extract_sends_transcript_with_seconds_and_schema(transcript):
 
 
 def test_draft_keeps_editor_mode(transcript, draft):
-    engine, messages = _engine(draft.model_copy(update={"mode": ArticleMode.FULL}))
+    engine, messages = _engine(_draft_output(draft))
     request = DraftRequest(
         material=MaterialInput(title="Sonda", transcript=transcript),
         evidence=_evidence(),
@@ -55,7 +64,7 @@ def test_draft_keeps_editor_mode(transcript, draft):
 
 
 def test_repair_prompt_lists_problems(transcript, draft):
-    engine, messages = _engine(draft)
+    engine, messages = _engine(_draft_output(draft))
     request = DraftRequest(material=MaterialInput(title="S", transcript=transcript), evidence=_evidence(), mode=ArticleMode.SHORT)
     engine.repair_draft(request, draft, ["Cytat „x” (NOT_FOUND)"])
     assert "- Cytat „x” (NOT_FOUND)" in messages.calls[0]["messages"][0]["content"]
@@ -72,3 +81,31 @@ def test_missing_parsed_output_raises(transcript):
     engine, _ = _engine(None)
     with pytest.raises(EngineError):
         engine.extract_evidence(MaterialInput(title="S", transcript=transcript))
+
+
+def _request(transcript, title="Sonda"):
+    return DraftRequest(
+        material=MaterialInput(title=title, transcript=transcript), evidence=_evidence(), mode=ArticleMode.FULL
+    )
+
+
+def test_title_count_is_normalized(transcript, draft):
+    engine, _ = _engine(_draft_output(draft, title_options=["A", "B", "A", "C", "D"]))
+    assert engine.write_draft(_request(transcript)).title_options == ["A", "B", "C"]
+    engine, _ = _engine(_draft_output(draft, title_options=["Jedyny"]))
+    assert engine.write_draft(_request(transcript)).title_options == ["Jedyny", "Sonda"]
+
+
+def test_validation_error_is_retried_once(transcript):
+    from pydantic import ValidationError
+
+    try:
+        EvidencePack.model_validate({})
+    except ValidationError as error:
+        invalid = error
+    engine, messages = _engine([invalid, _evidence()])
+    assert engine.extract_evidence(MaterialInput(title="S", transcript=transcript)).summary == "s"
+    engine, messages = _engine([invalid, invalid])
+    with pytest.raises(EngineError):
+        engine.extract_evidence(MaterialInput(title="S", transcript=transcript))
+    assert len(messages.calls) == 2

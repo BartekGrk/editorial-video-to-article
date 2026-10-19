@@ -6,11 +6,23 @@ const view = document.getElementById("view");
 const state = { config: null, material: null, profiles: [], tab: "draft" };
 
 const STATUS = {
+  PROCESSING: ["Przetwarzanie…", "warn"],
+  FAILED: ["Błąd", "err"],
   NEW: ["Nowy", ""],
   ANALYZED: ["Przeanalizowany", "warn"],
   DRAFTED: ["Draft", "warn"],
   APPROVED: ["Zatwierdzony", "ok"],
 };
+
+const STAGES = [
+  ["QUEUED", "W kolejce"],
+  ["DOWNLOADING", "Pobieranie nagrania"],
+  ["TRANSCRIBING", "Transkrypcja mowy"],
+  ["SPEAKERS", "Rozpoznanie mówców"],
+  ["ANALYZING", "Materiał dowodowy"],
+  ["WRITING", "Draft i weryfikacja"],
+  ["DONE", "Gotowe"],
+];
 
 // --- narzędzia ---------------------------------------------------------------
 
@@ -112,8 +124,9 @@ async function renderList() {
   const materials = await api("/api/materials");
   const rows = materials.map((m) => {
     const [label, cls] = STATUS[m.status];
+    const stage = m.status === "PROCESSING" ? ` · ${esc(stageName(m.job_stage))}` : "";
     return `<tr class="clickable" data-id="${esc(m.id)}">
-      <td><strong>${esc(m.title)}</strong><div class="small muted">${esc(m.topic)}</div></td>
+      <td><strong>${esc(m.title)}</strong><div class="small muted">${esc(m.topic)}${stage}</div></td>
       <td>${esc(m.category)}</td>
       <td>${m.mode ? esc(m.mode) : "–"}</td>
       <td><span class="badge ${cls}">${label}</span></td>
@@ -123,7 +136,8 @@ async function renderList() {
 
   view.innerHTML = `
     <div class="row"><h1>Materiały wideo</h1><span class="spacer"></span>
-      <a class="button primary" href="#/new">+ Nowy materiał</a></div>
+      <a class="button" href="#/new">+ Z transkrypcji</a></div>
+    ${autoForm()}
     <div class="card">
       ${materials.length ? `<table>
         <thead><tr><th>Tytuł</th><th>Kategoria</th><th>Tryb</th><th>Status</th><th>Zmiana</th></tr></thead>
@@ -134,6 +148,12 @@ async function renderList() {
     <p class="small muted">Narzędzie przygotowuje weryfikowalne drafty. Decyzję o publikacji i ostateczną redakcję podejmuje człowiek.</p>`;
 
   view.querySelectorAll("tr[data-id]").forEach((tr) => tr.addEventListener("click", () => (location.hash = `#/m/${tr.dataset.id}`)));
+  bindAutoForm();
+  // Lista odświeża się sama, dopóki coś jest przetwarzane.
+  clearTimeout(renderList.timer);
+  if (materials.some((m) => m.status === "PROCESSING")) {
+    renderList.timer = setTimeout(() => { if ((location.hash || "#/") === "#/") route(); }, 4000);
+  }
   view.querySelector("#demo")?.addEventListener("click", (e) => busy(e.target, "Wczytywanie…", async () => {
     const created = await api("/api/materials", { method: "POST", body: DEMO_MATERIAL });
     location.hash = `#/m/${created.id}`;
@@ -158,6 +178,78 @@ const DEMO_MATERIAL = {
     "[00:01:02] Przechodzieńka 3: Puszki oddaję razem z butelkami, dzieci pilnują, żeby niczego nie wyrzucić.",
   ].join("\n"),
 };
+
+// --- automat z nagrania ------------------------------------------------------
+
+function stageName(stage) {
+  return (STAGES.find(([key]) => key === stage) || [stage, stage || ""])[1];
+}
+
+function autoForm() {
+  const asr = state.config?.asr;
+  return `
+    <form class="card" id="auto-form">
+      <h2>Automatycznie z nagrania</h2>
+      <p class="small muted">Plik wideo/audio albo link (YouTube lub bezpośredni link do pliku) → transkrypcja → materiał dowodowy →
+        draft w stylu WP Finanse → weryfikacja cytatów. Gotowy draft, który przeszedł weryfikację, zostaje zatwierdzony do eksportu.</p>
+      ${asr ? "" : '<p class="verify err small">Na serwerze brakuje faster-whisper lub ffmpeg – transkrypcja nagrań jest niedostępna.</p>'}
+      <div class="grid2">
+        <div><label for="auto-file">Plik nagrania</label><input type="file" id="auto-file" accept="video/*,audio/*"></div>
+        <div><label for="auto-url">…albo link</label><input type="url" id="auto-url" placeholder="https://"></div>
+        <div><label for="auto-title">Tytuł roboczy (opcjonalnie)</label><input type="text" id="auto-title"></div>
+        <div><label for="auto-mode">Tryb</label><select id="auto-mode">
+          <option value="">Automatycznie (według materiału)</option><option value="SHORT">SHORT – tekst pod wideo</option><option value="FULL">FULL – pełny artykuł</option></select></div>
+      </div>
+      <label class="check"><input type="checkbox" id="auto-consent">
+        <span>Materiał jest publiczny lub polityka redakcji pozwala wysłać transkrypcję do zewnętrznego modelu językowego.</span></label>
+      <label class="check"><input type="checkbox" id="auto-approve" checked>
+        <span>Zatwierdź automatycznie, jeśli weryfikacja nie wykryje błędów.</span></label>
+      <div class="row" style="margin-top:.8rem"><button class="primary" type="submit" ${asr ? "" : "disabled"}>Uruchom automat</button></div>
+    </form>`;
+}
+
+function bindAutoForm() {
+  const form = view.querySelector("#auto-form");
+  if (!form) return;
+  form.addEventListener("submit", (event) => {
+    event.preventDefault();
+    const data = new FormData();
+    const file = form.querySelector("#auto-file").files[0];
+    if (file) data.append("file", file);
+    data.append("url", form.querySelector("#auto-url").value.trim());
+    data.append("title", form.querySelector("#auto-title").value.trim());
+    data.append("mode", form.querySelector("#auto-mode").value);
+    data.append("external_processing_allowed", form.querySelector("#auto-consent").checked);
+    data.append("auto_approve", form.querySelector("#auto-approve").checked);
+    busy(event.submitter, file ? "Wysyłanie pliku…" : "Uruchamiam…", async () => {
+      const response = await fetch("/api/auto", { method: "POST", body: data });
+      const body = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(typeof body.detail === "string" ? body.detail : "Nie udało się uruchomić automatu");
+      renderWorkspace.lastStage = "PROCESSING";
+      location.hash = `#/m/${body.id}`;
+    });
+  });
+}
+
+function drawProcessing(m) {
+  const current = STAGES.findIndex(([key]) => key === m.job_stage);
+  const failed = m.status === "FAILED";
+  view.innerHTML = `
+    <div class="row"><h1 style="margin:0">${esc(m.title)}</h1><span class="badge ${failed ? "err" : "warn"}">${failed ? "Błąd" : "Przetwarzanie…"}</span></div>
+    <p class="muted small">${esc(m.source)}</p>
+    <div class="card">
+      <ol class="stages">${STAGES.map(([key, name], i) => {
+        const cls = failed && i === Math.max(current, 0) ? "err" : i < current || m.job_stage === "DONE" ? "done" : i === current ? "active" : "";
+        return `<li class="${cls}">${name}</li>`;
+      }).join("")}</ol>
+      ${failed ? `<div class="verify err"><strong>Błąd:</strong> ${esc(m.job_error || "nieznany")}</div>
+        <button id="delete-failed">Usuń materiał</button>` : '<p class="small muted">Transkrypcja trwa zwykle około długości nagrania. Strona odświeża się sama.</p>'}
+    </div>`;
+  view.querySelector("#delete-failed")?.addEventListener("click", (e) => busy(e.target, "Usuwanie…", async () => {
+    await api(`/api/materials/${m.id}`, { method: "DELETE" });
+    location.hash = "#/";
+  }));
+}
 
 // --- formularz materiału -----------------------------------------------------
 
@@ -186,6 +278,8 @@ async function renderForm(id) {
       <label for="transcript">Transkrypcja</label>
       <p class="small muted">Jedna wypowiedź na linię: <code>[00:01:23] Imię Nazwisko: treść</code> lub <code>[01:23] treść</code>. Linie bez znacznika czasu są doklejane do poprzedniej wypowiedzi.</p>
       <textarea id="transcript" class="mono" rows="16" required>${esc(m.transcript_raw)}</textarea>
+      <label class="check"><input type="checkbox" id="has-speakers" ${m.transcript_has_speakers === false ? "" : "checked"}>
+        <span>Linie zawierają mówców (<code>Mówca: treść</code>). Odznacz dla transkrypcji automatycznej bez mówców.</span></label>
       <label class="check"><input type="checkbox" id="consent" ${m.external_processing_allowed ? "checked" : ""}>
         <span>Materiał jest publiczny, syntetyczny lub polityka redakcji pozwala wysłać go do zewnętrznego API modelu językowego.
         <span class="muted small">Bez tej zgody analiza AI nie zostanie uruchomiona.</span></span></label>
@@ -208,6 +302,7 @@ async function renderForm(id) {
       angle: form.querySelector("#angle").value.trim(),
       video_url: form.querySelector("#video_url").value.trim(),
       transcript_raw: form.querySelector("#transcript").value,
+      transcript_has_speakers: form.querySelector("#has-speakers").checked,
       external_processing_allowed: form.querySelector("#consent").checked,
       style_profile_id: form.querySelector("#style").value || null,
     };
@@ -228,9 +323,19 @@ async function renderForm(id) {
 // --- przestrzeń robocza ------------------------------------------------------
 
 async function renderWorkspace(id) {
+  clearTimeout(renderWorkspace.timer);
   const [material, profiles] = await Promise.all([api(`/api/materials/${id}`), api("/api/style-profiles")]);
   state.material = material;
   state.profiles = profiles;
+  if (material.status === "PROCESSING" || (material.status === "FAILED" && !material.transcript)) {
+    drawProcessing(material);
+    if (material.status === "PROCESSING") {
+      renderWorkspace.timer = setTimeout(() => { if (location.hash === `#/m/${id}`) renderWorkspace(id); }, 2000);
+    }
+    return;
+  }
+  if (material.job_stage === "DONE" && renderWorkspace.lastStage === "PROCESSING") state.tab = "draft";
+  renderWorkspace.lastStage = material.status;
   if (!material.draft && state.tab === "draft" && !material.evidence) state.tab = "evidence";
   drawWorkspace();
 }
@@ -243,8 +348,10 @@ function drawWorkspace() {
       <h1 style="margin:0">${esc(m.title)}</h1>
       <span class="badge ${cls}">${label}</span>
       <span class="spacer"></span>
+      <button id="auto-run" title="Analiza, wybór trybu, draft w stylu profilu i weryfikacja – bez dalszych kliknięć">⚡ Automat</button>
       <a class="button" href="#/m/${m.id}/edit">Ustawienia materiału</a>
     </div>
+    ${m.status === "FAILED" ? `<div class="verify err"><strong>Automat zakończył się błędem:</strong> ${esc(m.job_error || "nieznany błąd")}</div>` : ""}
     <p class="muted small">${[m.category, m.topic, m.angle && "kąt: " + m.angle].filter(Boolean).map(esc).join(" · ")}</p>
     <div class="workspace">
       <aside class="card sticky" id="transcript-panel">${transcriptPanel(m)}</aside>
@@ -258,6 +365,14 @@ function drawWorkspace() {
     </div>`;
 
   view.querySelectorAll("[data-tab]").forEach((b) => b.addEventListener("click", () => { state.tab = b.dataset.tab; drawWorkspace(); }));
+  view.querySelector("#auto-run").addEventListener("click", (e) => {
+    if (m.draft && !confirm("Automat wygeneruje nowy draft i zastąpi bieżący. Kontynuować?")) return;
+    busy(e.target, "Uruchamiam…", async () => {
+      await api(`/api/materials/${m.id}/auto`, { method: "POST", body: {} });
+      renderWorkspace.lastStage = "PROCESSING";
+      renderWorkspace(m.id);
+    });
+  });
   bindTranscript();
   const body = view.querySelector("#tab-body");
   if (state.tab === "evidence") drawEvidence(body);
@@ -270,6 +385,7 @@ function transcriptPanel(m) {
   let player = "";
   if (yt) player = `<iframe id="player" class="video" src="https://www.youtube-nocookie.com/embed/${esc(yt)}" allow="autoplay; encrypted-media" allowfullscreen title="Wideo"></iframe>`;
   else if (isDirectVideo(m.video_url)) player = `<video id="player" class="video" controls preload="metadata" src="${esc(m.video_url)}"></video>`;
+  else if (m.media_file) player = `<video id="player" class="video" controls preload="metadata" src="/media/${esc(m.id)}"></video>`;
 
   const segments = m.transcript.segments.map((s) => `
     <div class="segment" id="seg-${s.start_seconds}">
@@ -382,8 +498,8 @@ function generatorCard(m) {
     <div class="card">
       <h2>${m.draft ? "Wygeneruj ponownie" : "Wygeneruj draft"}</h2>
       <div class="mode-choice">
-        ${option("SHORT", "SHORT", "Tekst towarzyszący wideo: tytuły, krótki lead, zwięzła treść.")}
-        ${option("FULL", "FULL", "Pełny artykuł: lead, śródtytuły, wybrane cytaty.")}
+        ${option("SHORT", "SHORT", "Tekst pod wideo: tytuły i jeden akapit (40–90 słów).")}
+        ${option("FULL", "FULL", "Pełny artykuł: lead, śródtytuły, cytaty z myślnikiem (300–850 słów).")}
       </div>
       <div class="grid2">
         <div><label for="target">Docelowa długość (słowa, opcjonalnie)</label><input type="number" id="target" min="30" max="3000" placeholder="wynika z materiału"></div>
@@ -399,14 +515,20 @@ function generatorCard(m) {
     </div>`;
 }
 
+function formatBox(report) {
+  const warnings = report?.format_warnings || [];
+  if (!warnings.length) return "";
+  return `<div class="verify warn"><strong>Format WP Finanse:</strong> odstępstwa do rozważenia (nie blokują eksportu).<ul>${warnings.map((w) => `<li>${esc(w)}</li>`).join("")}</ul></div>`;
+}
+
 function verificationBox(report) {
   if (!report) return "";
-  if (report.ok) return `<div class="verify ok"><strong>✓ Weryfikacja przeszła.</strong> Wszystkie cytaty występują w transkrypcji, tezy mają wskazane źródła.</div>`;
+  if (report.ok) return `<div class="verify ok"><strong>✓ Weryfikacja przeszła.</strong> Wszystkie cytaty występują w transkrypcji, tezy mają wskazane źródła.</div>${formatBox(report)}`;
   const items = [];
   report.quotes.filter((q) => q.status !== "VERIFIED").forEach((q) => items.push(`Cytat „${esc(q.quote.text)}”: ${esc(q.message)}`));
   report.claims.forEach((c) => items.push(`Teza „${esc(c.statement)}”: ${esc(c.problems.join("; "))}`));
   report.inline_quotes.filter((q) => !q.verified).forEach((q) => items.push(`${esc(q.location)}: „${esc(q.text)}” nie występuje w transkrypcji`));
-  return `<div class="verify err"><strong>✗ Draft nie przeszedł weryfikacji.</strong> Popraw przed zatwierdzeniem i eksportem.<ul>${items.map((i) => `<li>${i}</li>`).join("")}</ul></div>`;
+  return `<div class="verify err"><strong>✗ Draft nie przeszedł weryfikacji.</strong> Popraw przed zatwierdzeniem i eksportem.<ul>${items.map((i) => `<li>${i}</li>`).join("")}</ul></div>${formatBox(report)}`;
 }
 
 function drawDraft(root) {
@@ -430,13 +552,13 @@ function drawDraft(root) {
         ${d.title_options.length < 3 ? '<button type="button" class="link" id="add-title">+ dodaj tytuł</button>' : ""}
         ${d.title_options.length > 2 ? '<button type="button" class="link" id="remove-title">− usuń ostatni tytuł</button>' : ""}
       </div>
-      <label for="lead">Lead</label>
+      <label for="lead">${d.mode === "SHORT" ? "Tekst pod wideo (jeden akapit)" : "Lead"}</label>
       <textarea id="lead" rows="3" class="paper">${esc(d.lead)}</textarea>
       <div id="sections">${d.sections.map(sectionEditor).join("")}</div>
       <button type="button" class="link" id="add-section">+ dodaj sekcję</button>
 
       <h3 style="margin-top:1.2rem">Cytaty</h3>
-      <p class="small muted">Cytat w cudzysłowie „…” w tekście musi występować dosłownie w transkrypcji – sprawdzamy to przy każdym zapisie.</p>
+      <p class="small muted">Cytat w cudzysłowie „…” lub akapit zaczynający się od myślnika („- treść - mówi X”) musi występować dosłownie w transkrypcji – sprawdzamy to przy każdym zapisie.</p>
       <ul class="list" id="quotes">${d.quotes.map((q, i) => `<li data-i="${i}">${tcLink(q.timecode_seconds)} <strong>${esc(q.speaker || "mówca nieznany")}</strong>: „${esc(q.text)}”
         <button type="button" class="icon" data-remove-quote="${i}" title="Usuń z listy">✕</button></li>`).join("") || "<li class='muted'>Brak</li>"}</ul>
 

@@ -17,3 +17,10 @@ def test_evaluation_runs_on_examples():
     report = report_markdown(list(results.values()), "heuristic")
     assert "Warunek pilota: zero sfabrykowanych cytatów w wersji końcowej — spełniony." in report
     assert "## Ocena redaktora" in report
+
+
+def test_draft_words_include_lead(draft):
+    from app.evaluation import draft_words
+
+    draft.sections = []
+    assert draft_words(draft) > 0

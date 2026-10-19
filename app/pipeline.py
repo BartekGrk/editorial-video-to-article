@@ -69,11 +69,14 @@ def write(engine: Engine, request: DraftRequest) -> DraftResult:
     transcript = request.material.transcript
     draft = engine.write_draft(request)
     report = verify_draft(draft, transcript)
-    if report.ok:
+    # Model językowy poprawia też wyraźne odstępstwa od formatu; regułowy silnik
+    # nie umie przeredagować tekstu, więc dla niego poprawka dotyczy tylko błędów.
+    problems = report.problems() + (report.format_warnings if engine.external else [])
+    if not problems:
         return DraftResult(draft=draft, report=report, repaired=False, first_report=report)
 
     # Jedna runda poprawki: więcej rund rzadko pomaga, a mnoży koszt i czas.
-    repaired = engine.repair_draft(request, draft, report.problems())
+    repaired = engine.repair_draft(request, draft, problems)
     return DraftResult(
         draft=repaired, report=verify_draft(repaired, transcript), repaired=True, first_report=report
     )

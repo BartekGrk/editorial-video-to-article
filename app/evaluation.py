@@ -40,6 +40,7 @@ class CaseResult:
     reference_words: int | None
     title_words: int
     lead_words: int
+    format_warnings: int
 
 
 def _words(text: str) -> int:
@@ -47,7 +48,8 @@ def _words(text: str) -> int:
 
 
 def draft_words(draft: ArticleDraft) -> int:
-    return sum(_words(p) for s in draft.sections for p in s.paragraphs)
+    """Lead + treść – w trybie SHORT cały tekst jest w leadzie."""
+    return _words(draft.lead) + sum(_words(p) for s in draft.sections for p in s.paragraphs)
 
 
 def _verified(report: VerificationReport) -> int:
@@ -88,6 +90,7 @@ def run_case(engine: Engine, transcript_path: Path) -> CaseResult:
         reference_words=_words(ref_path.read_text(encoding="utf-8")) if ref_path.exists() else None,
         title_words=_words(draft.title_options[0]),
         lead_words=_words(draft.lead),
+        format_warnings=len(result.report.format_warnings),
     )
 
 
@@ -100,15 +103,16 @@ def report_markdown(results: list[CaseResult], engine_name: str) -> str:
         f"# Raport ewaluacji ({engine_name})",
         "",
         "| Przypadek | Tryb | Czas [s] | Cytaty OK (1. wersja) | Cytaty w tekście błędne (1. wersja) | Poprawka | Wynik końcowy | "
-        "Tezy / do weryf. / bez źródła | Słowa draft / ref. |",
-        "| --- | --- | --- | --- | --- | --- | --- | --- | --- |",
+        "Tezy / do weryf. / bez źródła | Słowa draft / ref. | Uwagi do formatu |",
+        "| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |",
     ]
     for r in results:
         ref = r.reference_words if r.reference_words is not None else "–"
         lines.append(
             f"| {r.name} | {r.mode.value} | {r.seconds} | {r.quotes_verified_first}/{r.quotes_total} | "
             f"{r.inline_failed_first} | {'tak' if r.repaired else 'nie'} | {'OK' if r.final_ok else 'BŁĘDY'} | "
-            f"{r.claims_total} / {r.claims_flagged} / {r.claims_without_source} | {r.draft_words} / {ref} |"
+            f"{r.claims_total} / {r.claims_flagged} / {r.claims_without_source} | {r.draft_words} / {ref} | "
+            f"{r.format_warnings} |"
         )
 
     if results:

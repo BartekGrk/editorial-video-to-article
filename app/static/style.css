@@ -122,6 +122,7 @@ blockquote { margin: 0; font-family: var(--serif); }
 .verify { border-radius: var(--radius); padding: .7rem 1rem; margin-bottom: 1rem; }
 .verify.ok { background: var(--ok-bg); color: var(--ok); }
 .verify.err { background: var(--err-bg); color: var(--err); }
+.verify.warn { background: var(--warn-bg); color: var(--warn); }
 .verify ul { margin: .3rem 0 0; padding-left: 1.2rem; }
 
 .mode-choice { display: flex; gap: .5rem; }
@@ -137,6 +138,14 @@ pre.export { white-space: pre-wrap; background: var(--surface-2); padding: .8rem
 }
 #toast.show { opacity: 1; }
 #toast.error { background: var(--err); color: #fff; }
+
+.stages { list-style: none; padding: 0; margin: 0 0 1rem; display: grid; gap: .35rem; }
+.stages li { padding: .35rem .7rem; border-radius: 6px; color: var(--muted); border: 1px solid var(--border); }
+.stages li.done { color: var(--ok); background: var(--ok-bg); border-color: transparent; }
+.stages li.done::before { content: "✓ "; }
+.stages li.active { color: var(--text); border-color: var(--accent); font-weight: 600; }
+.stages li.active::after { content: " …"; }
+.stages li.err { color: var(--err); background: var(--err-bg); border-color: transparent; }
 
 .empty { text-align: center; padding: 2.5rem 1rem; color: var(--muted); }
 

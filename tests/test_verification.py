@@ -100,3 +100,21 @@ def test_dash_quote_paragraph_is_verified(draft, transcript):
     report = verify_draft(draft, transcript)
     assert not report.ok
     assert [q.text for q in report.inline_quotes if not q.verified] == ["Za te pieniądze nigdy nie będę stać w kolejce"]
+
+
+def test_format_warnings_do_not_block(draft, transcript):
+    full = draft.model_copy(update={"mode": "FULL"})
+    report = verify_draft(full, transcript)
+    assert report.ok
+    assert report.format_warnings  # krótki tekst jako FULL: za mało słów i śródtytułów
+
+
+def test_format_warnings_for_long_short_text(draft):
+    from app.format_check import format_warnings
+
+    draft.lead = "słowo " * 150
+    assert any(w.startswith("Tekst pod wideo ma 1") and "słów" in w for w in format_warnings(draft))
+    full = draft.model_copy(update={"mode": "FULL"})
+    warnings = format_warnings(full)
+    assert any("śródtytułów" in w for w in warnings)
+    assert any("myślnikiem" in w for w in warnings)
