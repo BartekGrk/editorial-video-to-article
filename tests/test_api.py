@@ -45,3 +45,11 @@ def test_draft_requires_two_or_three_titles(client, raw_transcript, draft_data):
     draft_data["title_options"] = ["Jeden tytuł"]
     payload = {"transcript": {"text": raw_transcript}, "draft": draft_data}
     assert client.post("/api/tools/verify", json=payload).status_code == 422
+
+
+def test_markdown_export_keeps_dialogue_paragraphs_out_of_lists(draft):
+    from app.render import render_markdown
+
+    draft.sections[0].paragraphs.append("- Za te trzydzieści groszy nie będę stać w kolejce - mówi Przechodzień 2.")
+    markdown = render_markdown(draft, include_control=False)
+    assert "\n\\- Za te trzydzieści groszy" in markdown

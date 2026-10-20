@@ -133,6 +133,7 @@ def test_auto_failure_is_reported(auto_client):
     material = client.get(f"/api/materials/{mid}").json()
     assert material["status"] == "FAILED"
     assert material["job_error"] == "model ASR niedostępny"
+    assert material["job_stage"] == "TRANSCRIBING"  # etap, na którym wystąpił błąd
 
 
 @needs_ffmpeg

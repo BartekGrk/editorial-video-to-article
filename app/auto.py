@@ -29,7 +29,6 @@ class Stage(str, Enum):
     ANALYZING = "ANALYZING"
     WRITING = "WRITING"
     DONE = "DONE"
-    FAILED = "FAILED"
 
 
 StageCallback = Callable[[Stage], None]

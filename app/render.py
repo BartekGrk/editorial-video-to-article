@@ -35,16 +35,21 @@ def _control_lines(draft: ArticleDraft) -> list[str]:
     return lines
 
 
+def _md_paragraph(text: str) -> str:
+    """Akapit dialogowy "- cytat - mówi X." bez escapowania stałby się w Markdown listą."""
+    return "\n".join(("\\" + line) if line.lstrip()[:1] in "-+*" and line.strip() else line for line in text.split("\n"))
+
+
 def render_markdown(draft: ArticleDraft, include_control: bool = True) -> str:
     lines = [f"<!-- tryb: {draft.mode.value} -->", "", "## Propozycje tytułu", ""]
     lines += [f"{i}. {title}" for i, title in enumerate(draft.title_options, start=1)]
-    lines += ["", "## Lead", "", draft.lead, "", "## Treść", ""]
+    lines += ["", "## Lead", "", _md_paragraph(draft.lead), "", "## Treść", ""]
 
     for section in draft.sections:
         if section.heading:
             lines += [f"### {section.heading}", ""]
         for paragraph in section.paragraphs:
-            lines += [paragraph, ""]
+            lines += [_md_paragraph(paragraph), ""]
 
     if include_control:
         lines += _control_lines(draft)

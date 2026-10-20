@@ -14,7 +14,7 @@ from dataclasses import dataclass
 from app.engines.base import DraftRequest, Engine, MaterialInput
 from app.models import ArticleDraft, EvidencePack, Quote, Transcript
 from app.quote_markers import expand_markers
-from app.verification import QuoteStatus, VerificationReport, check_quote, segment_at, verify_draft
+from app.verification import QuoteStatus, VerificationReport, check_quote, same_speaker, segment_at, verify_draft
 
 
 @dataclass
@@ -73,7 +73,7 @@ def fix_quote_timecodes(draft: ArticleDraft, transcript: Transcript) -> ArticleD
         check = check_quote(quote, transcript)
         if check.status == QuoteStatus.TIMECODE_MISMATCH:
             segment = transcript.segments[check.segment_index]
-            if segment.speaker is None or quote.speaker == segment.speaker:
+            if segment.speaker is None or same_speaker(quote.speaker, segment.speaker):
                 quote = quote.model_copy(update={"timecode_seconds": segment.start_seconds})
         quotes.append(quote)
     return draft.model_copy(update={"quotes": quotes})

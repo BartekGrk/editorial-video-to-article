@@ -240,7 +240,7 @@ function drawProcessing(m) {
     <p class="muted small">${esc(m.source)}</p>
     <div class="card">
       <ol class="stages">${STAGES.map(([key, name], i) => {
-        const cls = failed && i === Math.max(current, 0) ? "err" : i < current || m.job_stage === "DONE" ? "done" : i === current ? "active" : "";
+        const cls = failed && i === Math.max(current, 0) ? "err" : i < current || m.job_stage === "DONE" ? "done" : i === current && !failed ? "active" : "";
         return `<li class="${cls}">${name}</li>`;
       }).join("")}</ol>
       ${failed ? `<div class="verify err"><strong>Błąd:</strong> ${esc(m.job_error || "nieznany")}</div>
@@ -557,7 +557,9 @@ function attributionBox(report) {
   if (!warnings.length) return "";
   return `<div class="verify warn"><strong>Przypisanie cytatów:</strong> automat nie zatwierdza draftu, dopóki tego nie rozstrzygniesz.
     <ul>${warnings.map((w) => `<li>${esc(w)}</li>`).join("")}</ul>
-    <button type="button" id="declare-quotes" class="small">Dodaj do listy cytatów z mówcą z nagrania</button></div>`;
+    ${(report.inline_quotes || []).some((c) => c.verified && !c.declared)
+      ? '<button type="button" id="declare-quotes" class="small">Dodaj do listy cytatów z mówcą z nagrania</button>'
+      : ""}</div>`;
 }
 
 // Redaktor potwierdza, że cytat z tekstu należy do mówcy wskazanego przez transkrypcję.

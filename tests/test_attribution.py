@@ -93,3 +93,30 @@ def test_curly_quotes_inside_quote_still_checked():
 def test_malformed_marker_blocks_export():
     report = _report("Jan Kowalski mówi: [[cytat:1].")
     assert not report.ok and report.unresolved_markers
+
+
+def test_next_dialogue_paragraph_is_not_attribution_and_prefix_quote():
+    t = Transcript(
+        segments=[
+            TranscriptSegment(start_seconds=5, speaker="Jan Kowalski, rolnik", text="To jest wielki problem dla nas wszystkich."),
+            TranscriptSegment(start_seconds=12, speaker="Anna Nowak, minister", text="że ceny wzrosną o dwadzieścia procent."),
+        ]
+    )
+    draft = ArticleDraft(
+        mode="FULL",
+        title_options=["A b c d", "E f g h"],
+        lead="Lead.",
+        sections=[{"heading": None, "paragraphs": ["[[wypowiedź:1]]", "[[wypowiedź:2]]"]}],
+        quotes=[
+            Quote(text="To jest wielki problem dla nas wszystkich", speaker="Jan Kowalski, rolnik", timecode_seconds=5),
+            Quote(text="że ceny wzrosną o dwadzieścia procent", speaker="Anna Nowak, minister", timecode_seconds=12),
+        ],
+    )
+    assert verify_draft(expand_markers(draft, t), t).strict_ok
+
+
+def test_fix_quote_timecodes_normalizes_speaker(transcript, draft):
+    from app import pipeline
+
+    draft.quotes[1] = draft.quotes[1].model_copy(update={"speaker": "przechodzień 2", "timecode_seconds": 5})
+    assert pipeline.fix_quote_timecodes(draft, transcript).quotes[1].timecode_seconds == 31

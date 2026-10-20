@@ -160,3 +160,38 @@ def test_transcript_edit_clears_asr_notes(client, raw_transcript):
     store.save(material)
     client.put(f"/api/materials/{material.id}", json={"title": "x", "transcript_raw": raw_transcript + "\n[00:02:00] Ala: Nowe."})
     assert client.get(f"/api/materials/{material.id}").json()["transcript_notes"] == []
+
+
+def test_long_operation_does_not_overwrite_newer_state(raw_transcript):
+    """Wynik analizy zapisany po edycji redaktora nie cofa jego zmian; po usunięciu – nie wskrzesza."""
+    from fastapi.testclient import TestClient
+
+    from app.engines import HeuristicEngine
+    from app.main import create_app
+    from app.store import Store
+
+    class EditsDuringAnalysis(HeuristicEngine):
+        hook = None
+
+        def extract_evidence(self, material):
+            if self.hook:
+                self.hook()
+            return super().extract_evidence(material)
+
+    engine = EditsDuringAnalysis()
+    client = TestClient(create_app(Store(":memory:"), engine))
+    mid = client.post("/api/materials", json={"title": "x", "transcript_raw": raw_transcript}).json()["id"]
+    draft = client.post(f"/api/materials/{mid}/draft", json={"mode": "SHORT"}).json()["material"]["draft"]
+
+    edited = {**draft, "lead": draft["lead"] + " Dopisek redaktora."}
+    engine.hook = lambda: client.app.state.store.update(Material, mid, draft=ArticleDraft.model_validate(edited))
+    client.post(f"/api/materials/{mid}/analyze")
+    assert client.get(f"/api/materials/{mid}").json()["draft"]["lead"].endswith("Dopisek redaktora.")
+
+    engine.hook = lambda: client.app.state.store.delete(Material, mid)
+    assert client.post(f"/api/materials/{mid}/analyze").status_code == 404
+    assert client.get(f"/api/materials/{mid}").status_code == 404
+
+
+from app.models import ArticleDraft  # noqa: E402
+from app.store import Material  # noqa: E402

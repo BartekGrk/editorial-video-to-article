@@ -106,7 +106,7 @@ def run_auto_job(
                 store,
                 material_id,
                 status=MaterialStatus.FAILED,
-                job_stage=auto.Stage.FAILED.value,
+                # job_stage zostaje na etapie, który się nie powiódł – UI pokazuje, gdzie był błąd.
                 job_error=str(error) or error.__class__.__name__,
             )
         except MaterialDeleted:

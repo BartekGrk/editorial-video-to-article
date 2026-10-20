@@ -165,7 +165,6 @@ def _recover_interrupted_jobs(store: Store) -> None:
                 material.model_copy(
                     update={
                         "status": MaterialStatus.FAILED,
-                        "job_stage": auto.Stage.FAILED.value,
                         "job_error": "Przetwarzanie przerwane restartem serwera – uruchom ponownie",
                     }
                 )
@@ -217,6 +216,28 @@ def create_app(
         if record is None:
             raise HTTPException(status_code=404, detail="Nie ma takiego profilu stylu")
         return record.profile
+
+    def commit(store: Store, material: Material, fields) -> Material:
+        """Zapis wyniku operacji na materiale – tylko zmienionych pól i tylko na aktualnym stanie.
+
+        Analiza i draft trwają długo; zapis całej kopii sprzed wywołania cofałby zmiany
+        zrobione w międzyczasie (edycje redaktora, usunięcie, uruchomiony automat).
+        `fields` to słownik albo funkcja aktualnego materiału zwracająca słownik.
+        """
+        current = store.get(Material, material.id)
+        if current is None:
+            raise HTTPException(status_code=404, detail="Materiał został usunięty w trakcie operacji")
+        if current.status == MaterialStatus.PROCESSING:
+            raise HTTPException(status_code=409, detail="W międzyczasie uruchomiono automat – wynik pominięto")
+        if (current.transcript_raw, current.transcript_has_speakers) != (
+            material.transcript_raw,
+            material.transcript_has_speakers,
+        ):
+            raise HTTPException(status_code=409, detail="Transkrypcja zmieniła się w trakcie operacji – uruchom ją ponownie")
+        updated = store.update(Material, material.id, **(fields(current) if callable(fields) else fields))
+        if updated is None:
+            raise HTTPException(status_code=404, detail="Materiał został usunięty w trakcie operacji")
+        return updated
 
     def resolve_style_id(store: Store, explicit: str | None, material_profile: str | None) -> str | None:
         """Profil dla draftu.
@@ -351,13 +372,14 @@ def create_app(
         _ensure_idle(material)
         _ensure_consent(engine, material)
         evidence = _engine_call(pipeline.analyze, engine, _material_input(material))
-        updated = material.model_copy(
-            update={
+        updated = commit(
+            store,
+            material,
+            lambda current: {
                 "evidence": evidence,
-                "status": MaterialStatus.ANALYZED if material.draft is None else material.status,
-            }
+                "status": MaterialStatus.ANALYZED if current.draft is None else current.status,
+            },
         )
-        store.save(updated)
         return _view(updated)
 
     @app.post("/api/materials/{material_id}/draft")
@@ -381,17 +403,18 @@ def create_app(
             extra_instructions=options.extra_instructions,
         )
         result = _engine_call(pipeline.write, engine, request)
-        updated = material.model_copy(
-            update={
+        updated = commit(
+            store,
+            material,
+            {
                 "evidence": evidence,
                 "mode": options.mode,
                 "draft": result.draft,
                 "report": result.report,
                 "style_profile_id": profile_id,
                 "status": MaterialStatus.DRAFTED,
-            }
+            },
         )
-        store.save(updated)
         return DraftResponse(material=_view(updated), repaired=result.repaired)
 
     @app.put("/api/materials/{material_id}/draft")
@@ -400,10 +423,9 @@ def create_app(
     ) -> MaterialView:
         _ensure_idle(material)
         report = verify_draft(draft, _transcript(material))
-        updated = material.model_copy(
-            update={"draft": draft, "mode": draft.mode, "report": report, "status": MaterialStatus.DRAFTED}
+        updated = commit(
+            store, material, {"draft": draft, "mode": draft.mode, "report": report, "status": MaterialStatus.DRAFTED}
         )
-        store.save(updated)
         return _view(updated)
 
     @app.post("/api/materials/{material_id}/approve")
@@ -411,8 +433,12 @@ def create_app(
         _ensure_idle(material)
         if material.draft is None or material.report is None or not material.report.ok:
             raise HTTPException(status_code=409, detail="Zatwierdzić można tylko draft, który przeszedł weryfikację")
-        updated = material.model_copy(update={"status": MaterialStatus.APPROVED})
-        store.save(updated)
+        updated = commit(
+            store,
+            material,
+            # Zatwierdzamy tylko ten draft, który oglądał redaktor – nie nowszy, zapisany w międzyczasie.
+            lambda current: {"status": MaterialStatus.APPROVED if current.draft == material.draft else current.status},
+        )
         return _view(updated)
 
     @app.get("/api/materials/{material_id}/export")
