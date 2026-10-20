@@ -392,6 +392,10 @@ def test_title_from_filename_drops_camera_noise():
     assert title_from_filename("wywiad(1).mp4") == "Wywiad"
     assert title_from_filename("2025-01-15 sonda.mp4") == "Sonda"
     assert title_from_filename("Screen Recording 2025-01-15 at 14.30.22.mov") == "Nagranie"
+    assert title_from_filename("2025-01-15 14-30-22.mkv") == "Nagranie"
+    assert title_from_filename("2025-01-15_14-30-22_wywiad.mkv") == "Wywiad"
+    assert title_from_filename("2024 5 powodów.mp4") == "2024 5 powodów"
+    assert title_from_filename("VID_20250115_o_inflacji.mp4") == "O inflacji"
 
 
 def test_demo_titles_stay_stable_and_within_wp_length(raw_transcript):
@@ -421,27 +425,37 @@ def test_demo_subject_keeps_editor_title_with_abbreviations():
 
     engine = HeuristicEngine()
     transcript = parse_transcript("[00:00:05] Jan Kowalski: Oddaję butelki, bo automat jest w sklepie obok domu.")
-    for title in ("Prof. Kowalski o inflacji", "„Nie oddaję butelek” – sonda o kaucji", "Ceny prądu w 2025 r. wzrosną"):
+    cases = {
+        "Prof. Kowalski o inflacji": "Prof. Kowalski o inflacji",
+        "Ceny prądu w 2025 r. wzrosną": "Ceny prądu w 2025 r. wzrosną",
+        # Cytat z tytułu redaktora nie trafia do draftu – nie wiemy, czy padł w nagraniu.
+        "„Nie oddaję butelek” – sonda o kaucji": "Sonda o kaucji",
+        "Ekonomista o kredytach: „stopy spadną szybciej niż myślimy”": "Ekonomista o kredytach",
+        "Kowalski: „Stopy procentowe spadną w przyszłym roku o pół punktu – co z ratami": "Kowalski",
+    }
+    for title, subject in cases.items():
         material = MaterialInput(title=title, transcript=transcript)
         evidence = pipeline.analyze(engine, material)
-        draft = engine.write_draft(DraftRequest(material=material, evidence=evidence, mode=ArticleMode.SHORT))
-        assert draft.lead.startswith(title.rstrip(". ")), draft.lead
+        result = pipeline.write(engine, DraftRequest(material=material, evidence=evidence, mode=ArticleMode.SHORT))
+        assert result.draft.lead.startswith(subject + " –"), result.draft.lead
+        assert result.report.ok
+        assert all(t.count("„") == t.count("”") for t in result.draft.title_options)
 
 
-def test_retry_keeps_no_profile_from_older_rows(raw_transcript):
-    """Wiersze sprzed rozróżnienia null/"" mają brak profilu tylko w auto_settings."""
+def test_retry_uses_default_profile_chosen_after_failure(raw_transcript):
     store = Store(":memory:")
     client = TestClient(create_app(store, HeuristicEngine(), FakeTranscriber(), InlineRunner()))
+    custom = client.post("/api/style-profiles", json={"name": "P", "articles": ["T\n\nLead.\n\nAkapit."]}).json()["id"]
     material = Material(
         title="x",
         transcript_raw=raw_transcript,
         status=MaterialStatus.FAILED,
-        style_profile_id=None,
-        auto_settings=AutoSettings(style_profile_id="", auto_approve=False),
+        style_profile_id=None,  # redaktor wybrał po błędzie "domyślny"
+        auto_settings=AutoSettings(style_profile_id=custom, auto_approve=False),
     )
     store.save(material)
     client.post(f"/api/materials/{material.id}/retry")
-    assert client.get(f"/api/materials/{material.id}").json()["style_profile_id"] == ""
+    assert client.get(f"/api/materials/{material.id}").json()["style_profile_id"] == "wp-finanse"
 
 
 def test_unknown_explicit_profile_is_rejected(client, raw_transcript):

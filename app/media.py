@@ -48,6 +48,7 @@ class FetchedMedia:
 # Liczby w środku i na końcu nazwy zostają ("800-plus", "budzet-2025").
 _CAMERA_PREFIX = re.compile(r"img|vid|mov|mvi|dsc[nf]?|pxl|gopr\d*|screen ?recording|nagranie ekranu", re.I)
 _YEAR = re.compile(r"(?:19|20)\d\d")
+_TWO_DIGITS = re.compile(r"\d{1,2}")
 _TRAILING_NOISE = re.compile(r"final|v\d+|copy|kopia|edit|\(\d+\)|\d{6,}", re.I)
 
 
@@ -59,12 +60,17 @@ def title_from_filename(name: str) -> str:
         if len(words) >= size and _CAMERA_PREFIX.fullmatch(" ".join(words[:size])):
             del words[:size]
             # Po prefiksie aparatu zwykle data i godzina ("2025-01-15 at 14.30.22").
-            while words and (words[0].isdigit() or words[0].lower() in ("at", "o")):
+            while words and (
+                words[0].isdigit() or (words[0].lower() in ("at", "o") and len(words) > 1 and words[1].isdigit())
+            ):
                 words.pop(0)
             break
-    # Data na początku nazwy ("2025-01-15 sonda"); sam rok przed treścią zostaje ("2025 budżet").
-    if len(words) >= 3 and _YEAR.fullmatch(words[0]) and words[1].isdigit() and len(words[1]) <= 2:
-        del words[:3 if words[2].isdigit() and len(words[2]) <= 2 else 2]
+    # Pełna data na początku nazwy ("2025-01-15 sonda", OBS: "2025-01-15 14-30-22"), z godziną,
+    # jeśli jest. Rok lub liczba przed treścią zostają ("2025 budżet", "2024 5 powodów").
+    if len(words) >= 3 and _YEAR.fullmatch(words[0]) and all(_TWO_DIGITS.fullmatch(w) for w in words[1:3]):
+        del words[:3]
+        if len(words) >= 2 and all(_TWO_DIGITS.fullmatch(w) for w in words[:2]):
+            del words[: 3 if len(words) >= 3 and _TWO_DIGITS.fullmatch(words[2]) else 2]
     while words and _TRAILING_NOISE.fullmatch(words[-1]):
         words.pop()
     if not words:

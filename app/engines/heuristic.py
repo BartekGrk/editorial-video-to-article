@@ -54,9 +54,18 @@ _OWN_TITLE_SUFFIX = re.compile(
 )
 
 
+_QUOTED = re.compile(r"[„“\"»«][^„”“\"»«]*[”“\"«»]")
+
+
 def _subject(material: MaterialInput) -> str:
+    # Cytat z tytułu redaktora (lub z YouTube) nie przechodzi do tytułów i leadu: nie wiemy,
+    # czy padł w nagraniu dosłownie, a weryfikacja traktuje każdy cudzysłów jako cytat.
     title = _OWN_TITLE_SUFFIX.sub("", (material.title or "").strip())
-    return (title or material.topic or "Materiał wideo").strip().rstrip(" .?!:,;–-")
+    title = _QUOTED.sub(" ", title)
+    title = re.split(r"[„“\"»«]", title)[0]  # niezamknięty cudzysłów
+    title = " ".join(title.split()).strip(" .?!:,;–-")
+    subject = title or (material.topic or "").strip(" .?!:,;–-") or "Materiał wideo"
+    return subject[:1].upper() + subject[1:]
 
 
 def _clip(text: str, words: int = _MAX_SUBJECT_WORDS) -> str:

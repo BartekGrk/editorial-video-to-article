@@ -435,9 +435,9 @@ def create_app(
     ) -> DraftResponse:
         _ensure_idle(material)
         _ensure_consent(engine, material)
+        ensure_style_exists(store, options.style_profile_id)  # przed płatnym wywołaniem modelu
         material_input = _material_input(material)
         evidence = material.evidence or _engine_call(pipeline.analyze, engine, material_input)
-        ensure_style_exists(store, options.style_profile_id)
         profile_id = resolve_style_id(store, options.style_profile_id, material.style_profile_id)
         request = DraftRequest(
             material=material_input,
@@ -616,11 +616,9 @@ def create_app(
         if material.status != MaterialStatus.FAILED:
             raise HTTPException(status_code=409, detail="Ponowić można tylko automat zakończony błędem")
         _ensure_consent(request.app.state.engine, material)
-        # Profil z materiału: redaktor mógł go zmienić w ustawieniach po błędzie. Gdy materiał
-        # nie ma zapisanego wyboru (None), obowiązuje ten z ostatniego uruchomienia ("" = bez profilu).
-        options = material.auto_settings or AutoRunOptions()
-        if material.style_profile_id is not None:
-            options = options.model_copy(update={"style_profile_id": material.style_profile_id})
+        # Profil zawsze z materiału (None – domyślny, "" – bez profilu): redaktor mógł go zmienić
+        # w ustawieniach po błędzie. Prototyp nie migruje wierszy sprzed tego rozróżnienia.
+        options = (material.auto_settings or AutoRunOptions()).model_copy(update={"style_profile_id": None})
         if material.transcript_raw.strip():
             return _view(start_auto_job(request, material, options))
         media = request.app.state.media_dir / material.media_file if material.media_file else None
