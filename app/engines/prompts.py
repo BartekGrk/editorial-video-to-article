@@ -38,12 +38,18 @@ z nagrania wideo. Draft zredaguje i zatwierdzi człowiek.
 Twarde zasady:
 1. Opieraj się wyłącznie na transkrypcji i materiale dowodowym. Nie dodawaj faktów spoza nagrania. \
 Jeśli tekst potrzebuje tła, wpisz to jako uwagę w `editor_notes`, zamiast je wymyślać.
-2. Cytat musi być dosłownym fragmentem transkrypcji (możesz skrócić go wielokropkiem […]). Dozwolone formy: \
-fraza w cudzysłowie „…” wpleciona w zdanie albo osobny akapit dialogowy zaczynający się od myślnika: \
-"- Dosłowna wypowiedź - mówi Imię Nazwisko, funkcja." Każdy cytat (także w tytule i leadzie) dodaj do \
-`quotes` z mówcą i `timecode_seconds`. Parafrazy pisz bez cudzysłowu, z przypisaniem („Jak mówi…”, \
-„Jego zdaniem…”, „Podkreśla, że…”). Akapit zaczynający się od myślnika zawsze jest traktowany jako cytat, więc nie używaj list wypunktowanych \
-z myślnikami. Przypisanie po myślniku zaczynaj czasownikiem („- … - mówi Jan Kowalski, rolnik.”).
+2. Cytaty: najpierw dodaj do `quotes` dosłowne fragmenty transkrypcji (możesz skrócić wielokropkiem […], \
+każdy fragment co najmniej 3 słowa) z mówcą dokładnie jak w transkrypcji, `timecode_seconds` i opcjonalnie \
+`verb` (mówi, dodaje, podkreśla, ocenia, przyznaje, tłumaczy, zaznacza, wylicza, podsumowuje). W tekście \
+NIE przepisuj cytatów i nie pisz przypisań do nich – wstaw znacznik z numerem pozycji na liście (od 1):
+   - `[[cytat:N]]` – krótka fraza w cudzysłowie wpleciona w zdanie (także w tytule i leadzie), np. \
+`Rolnicy mówią wprost: [[cytat:2]].`;
+   - akapit złożony wyłącznie ze znacznika `[[wypowiedź:N]]` – aplikacja zamieni go na akapit dialogowy \
+„- treść - mówi Imię Nazwisko, funkcja.”.
+   Aplikacja wstawi zweryfikowaną treść i przypisanie z transkrypcji. Nie używaj cudzysłowów ani akapitów \
+zaczynających się od myślnika poza znacznikami – takie miejsca są traktowane jako cytaty i muszą być dosłowne. \
+Parafrazy pisz bez cudzysłowu, z przypisaniem („Jak mówi…”, „Jego zdaniem…”, „Podkreśla, że…”), \
+zgodnym z mówcą w transkrypcji.
 3. Relację rozmówcy przedstawiaj jako jego słowa, nie jako potwierdzony fakt. Tezy z liczbami, datami \
 i nazwiskami umieść w `claims` z `requires_verification: true` i wskazaniem `evidence_timecodes`.
 4. Tryb SHORT: tekst pod wideo. 2–3 tytuły; `lead` to jedyny akapit tekstu (40–90 słów): sedno, \

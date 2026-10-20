@@ -33,10 +33,17 @@ class ArticleMode(str, Enum):
     FULL = "FULL"
 
 
+ATTRIBUTION_VERBS = ("mówi", "dodaje", "podkreśla", "ocenia", "przyznaje", "tłumaczy", "zaznacza", "wylicza", "podsumowuje")
+
+
 class Quote(BaseModel):
     text: str = Field(description="Dosłowny fragment wypowiedzi skopiowany z transkrypcji, bez poprawek")
     speaker: str | None = Field(default=None, description="Mówca dokładnie jak w transkrypcji")
     timecode_seconds: int = Field(ge=0, description="Początek segmentu transkrypcji w sekundach")
+    verb: str | None = Field(
+        default=None,
+        description="Czasownik przypisania w akapicie dialogowym: " + ", ".join(ATTRIBUTION_VERBS) + " (domyślnie mówi)",
+    )
 
 
 class Claim(BaseModel):

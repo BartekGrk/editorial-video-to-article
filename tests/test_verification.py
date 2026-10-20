@@ -235,7 +235,7 @@ def test_third_review_regressions(draft, transcript):
     assert dash_quotes("- Inflacja spada - Jan Kowalski, ekonomista.", ["Jan Kowalski"]) == ["Inflacja spada"]
     # dwa cytaty w jednym akapicie nie sklejają się
     draft.lead = 'Jak mówi Jan, „inflacja spada powoli ale stale". Dodał też „ceny prądu wzrosną w przyszłym roku”.'
-    quoted = [q for _, q in extract_inline_quotes(draft) if "inflacja" in q or "ceny" in q]
+    quoted = [q for _, q, _ in extract_inline_quotes(draft) if "inflacja" in q or "ceny" in q]
     assert quoted == ["inflacja spada powoli ale stale", "ceny prądu wzrosną w przyszłym roku"]
 
 
@@ -328,12 +328,15 @@ def test_fifth_review_dash_rules():
     assert dash_quotes("- A b c - mówi X i dodaje: - D e f.") == ["A b c", "D e f."]
 
 
-def test_wrong_speaker_not_excused_by_unlabelled_repeat():
+def test_wrong_speaker_not_excused_by_labelled_repeat_only():
     from app.models import ArticleDraft, Transcript, TranscriptSegment
 
     text = "Za te trzydzieści groszy nie będę stać."
     t = Transcript(
-        segments=[TranscriptSegment(start_seconds=0, text=text), TranscriptSegment(start_seconds=10, speaker="Jan", text=text)]
+        segments=[
+            TranscriptSegment(start_seconds=0, speaker="Jan", text=text),
+            TranscriptSegment(start_seconds=10, speaker="Prowadzący", text=text),
+        ]
     )
     d = ArticleDraft(
         mode="SHORT",
@@ -343,3 +346,68 @@ def test_wrong_speaker_not_excused_by_unlabelled_repeat():
         quotes=[Quote(text=text, speaker="Anna", timecode_seconds=0)],
     )
     assert not verify_draft(d, t).strict_ok
+
+
+def test_original_unlabelled_statement_repeated_by_host():
+    from app.models import ArticleDraft
+    from app.transcript import parse_transcript
+
+    t = parse_transcript(
+        "[00:00] Nie stać nas na nawozy w tej cenie, mówię to otwarcie.\n"
+        "[00:08] Prowadzący: Nie stać nas na nawozy w tej cenie – tak pan mówi. Dlaczego?"
+    )
+    d = ArticleDraft(
+        mode="SHORT",
+        title_options=["A b c d", "E f g h"],
+        lead="- Nie stać nas na nawozy w tej cenie - mówi Jan Kowalski.",
+        sections=[],
+        quotes=[Quote(text="Nie stać nas na nawozy w tej cenie", speaker="Jan Kowalski", timecode_seconds=0)],
+    )
+    assert verify_draft(d, t).strict_ok
+
+
+def test_sixth_review_cases():
+    from app.models import ArticleDraft, Transcript, TranscriptSegment
+    from app.transcript import parse_transcript
+
+    labelled = Transcript(segments=[TranscriptSegment(start_seconds=5, speaker="dr Jan Kowalski, rolnik", text="Nie stać nas na nawozy w tej cenie.")])
+    declared = [Quote(text="Nie stać nas na nawozy w tej cenie", speaker="dr Jan Kowalski, rolnik", timecode_seconds=5)]
+    ok_paragraphs = (
+        "- Nie stać nas na nawozy w tej cenie - mówi Jan Kowalski, który – jak sam przyznaje – od 30 lat prowadzi gospodarstwo.",
+        "- Nie stać nas na nawozy w tej cenie - mówi Jan Kowalski. W jego gminie ceny wzrosły o 20 - 30 procent.",
+        "- Nie stać nas na nawozy w tej cenie - Jan Kowalski, rolnik.",
+    )
+    for paragraph in ok_paragraphs:
+        d = ArticleDraft(mode="SHORT", title_options=["A b c d", "E f g h"], lead=paragraph, sections=[], quotes=declared)
+        assert verify_draft(d, labelled).strict_ok, paragraph
+    # transkrypcja ASR bez mówców: przypisanie nazwiskiem z funkcją na końcu linii
+    unlabelled = parse_transcript("[00:05] Nie stać nas na nawozy w tej cenie.", with_speakers=False)
+    d = ArticleDraft(
+        mode="SHORT",
+        title_options=["A b c d", "E f g h"],
+        lead="- Nie stać nas na nawozy w tej cenie - Jan Kowalski, rolnik.",
+        sections=[],
+        quotes=[Quote(text="Nie stać nas na nawozy w tej cenie", timecode_seconds=5)],
+    )
+    assert verify_draft(d, unlabelled).ok
+    # lista z myślnikami dostaje podpowiedź
+    d = ArticleDraft(mode="SHORT", title_options=["A b c d", "E f g h"], lead="Zmiany:\n- Kwota wolna wzrośnie", sections=[])
+    assert any("punktorów" in p for p in verify_draft(d, labelled).problems())
+
+
+def test_quote_markers_expand_to_verified_text_and_attribution(transcript, draft):
+    from app.quote_markers import expand_markers
+
+    marked = draft.model_copy(
+        update={
+            "lead": "Rozmówcy są podzieleni: [[cytat:1]].",
+            "sections": [draft.sections[0].model_copy(update={"paragraphs": ["[[wypowiedź:2]]", "[[wypowiedź:9]]"]})],
+        }
+    )
+    expanded = expand_markers(marked)
+    assert expanded.lead == "Rozmówcy są podzieleni: „Oddaję, bo automat jest w sklepie obok domu”."
+    assert expanded.sections[0].paragraphs[0] == "- Za te trzydzieści groszy nie będę stać w kolejce - mówi Przechodzień 2."
+    report = verify_draft(expanded, transcript)
+    assert not report.ok and report.unresolved_markers == ["[[wypowiedź:9]]"]
+    expanded.sections[0].paragraphs.pop()
+    assert verify_draft(expanded, transcript).strict_ok

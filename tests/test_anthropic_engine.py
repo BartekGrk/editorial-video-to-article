@@ -109,3 +109,16 @@ def test_validation_error_is_retried_once(transcript):
     with pytest.raises(EngineError):
         engine.extract_evidence(MaterialInput(title="S", transcript=transcript))
     assert len(messages.calls) == 2
+
+
+def test_draft_markers_are_expanded_by_app(transcript, draft):
+    output = _draft_output(
+        draft,
+        lead="Rozmówcy: [[cytat:1]].",
+        sections=[{"heading": None, "paragraphs": ["[[wypowiedź:2]]"]}],
+    )
+    engine, _ = _engine(output)
+    result = engine.write_draft(_request(transcript))
+    assert result.lead == "Rozmówcy: „Oddaję, bo automat jest w sklepie obok domu”."
+    assert result.sections[0].paragraphs == ["- Za te trzydzieści groszy nie będę stać w kolejce - mówi Przechodzień 2."]
+    assert "[[" in engine.client.beta.messages.calls[0]["system"]

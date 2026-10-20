@@ -14,6 +14,7 @@ from pydantic import BaseModel, ValidationError
 
 from app.engines import prompts
 from app.engines.base import DraftRequest, EngineError, MaterialInput
+from app.quote_markers import expand_markers
 from app.models import ArticleDraft, ArticleMode, Claim, EditorialStyleProfile, EvidencePack, Quote, Section, SpeakerLabels
 
 DEFAULT_MODEL = "claude-opus-5-5"
@@ -120,8 +121,8 @@ class AnthropicEngine:
     def write_draft(self, request: DraftRequest) -> ArticleDraft:
         output = self._call(prompts.DRAFT_SYSTEM, prompts.draft_prompt(request), DraftOutput, "high")
         # Tryb wybiera redaktor (albo automat); model nie może go zmienić.
-        return output.to_draft(request.mode, request.material.title)
+        return expand_markers(output.to_draft(request.mode, request.material.title))
 
     def repair_draft(self, request: DraftRequest, draft: ArticleDraft, problems: list[str]) -> ArticleDraft:
         output = self._call(prompts.REPAIR_SYSTEM, prompts.repair_prompt(request, draft, problems), DraftOutput, "high")
-        return output.to_draft(request.mode, request.material.title)
+        return expand_markers(output.to_draft(request.mode, request.material.title))

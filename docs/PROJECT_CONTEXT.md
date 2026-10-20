@@ -39,11 +39,13 @@ Zrealizowane: Faza 1 w całości, większość Fazy 2 (profil stylu, ewaluacja, 
 15. **Akapit z myślnikiem** („- treść - mówi X”) to zawsze cytat i jest sprawdzany bez minimalnej długości. Cytaty w cudzysłowie sprawdzamy od 4 słów (krótsze to zwykle nazwy własne).
 16. **Odporność na odpowiedzi modelu:** luźny schemat draftu (liczba tytułów normalizowana po stronie aplikacji), jedno ponowienie przy błędzie walidacji, mechaniczna korekta timecode'u cytatu, którego tekst i mówca się zgadzają.
 17. **Bezpieczeństwo:** limit rozmiaru pliku, blokada linków do adresów wewnętrznych (bez sprawdzania przekierowań – ograniczenie), pliki zapisywane pod nazwą nadaną przez serwer.
+18. **Cytaty w tekście modelu przez znaczniki:** model nie przepisuje cytatów ani przypisań. Wstawia `[[cytat:N]]` i akapity `[[wypowiedź:N]]` odwołujące się do listy cytatów, a aplikacja podstawia zweryfikowaną treść i przypisanie z etykiety mówcy (`app/quote_markers.py`). Zmyślony cytat ani błędna osoba w przypisaniu cytatu nie powstaną w automacie z konstrukcji. Heurystyczny rozbiór akapitów z myślnikiem zostaje jako pomoc przy ręcznej edycji. Przy niejasności blokuje zamiast przepuszczać, ale wolny tekst pisany przez człowieka może go obejść (np. narracja od małej litery po przypisaniu).
 
 ## Znane ograniczenia
 
 - Weryfikacja porównuje z transkrypcją, a ta pochodzi z ASR. Błąd rozpoznania mowy (np. „atak kredytu” zamiast „rata kredytu”) przejdzie do cytatu jako „zgodny z transkrypcją”. Zabezpieczeniem są `requires_verification`, uwagi o mówcach i odtwarzacz z przeskokiem do timecode.
 - Przypisanie mówców przez model może się mylić; niepewne segmenty trafiają do uwag.
+- Parafraza przypisana złej osobie („Jan Kowalski twierdzi, że…”) nie jest wykrywana – kontrola dotyczy cytatów.
 - Nie wykrywamy parafrazy z błędnym sensem: sprawdzamy dosłowność cytatów i źródła tez, nie interpretację.
 - Brak analizy obrazu (napisy, wykresy, dokumenty w kadrze) i integracji z CMS.
 - Jeden użytkownik, bez logowania. Zadania wykonywane po kolei.
