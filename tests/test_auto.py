@@ -343,3 +343,16 @@ def test_retry_with_deleted_profile_falls_back(auto_client, raw_transcript):
     store.save(material)
     assert client.post(f"/api/materials/{material.id}/retry").status_code == 202
     assert client.get(f"/api/materials/{material.id}").json()["style_profile_id"] == "wp-finanse"
+
+
+def test_concurrent_auto_start_is_rejected(auto_client, raw_transcript):
+    client = auto_client()
+    store = client.app.state.store
+    material = Material(title="x", transcript_raw=raw_transcript)
+    store.save(material)
+    store.update(Material, material.id, status=MaterialStatus.PROCESSING)
+    # drugi start po odczycie "bezczynnego" stanu – atomowy warunek odrzuca
+    from app.store import ConditionFailed
+
+    with pytest.raises(ConditionFailed):
+        store.update(Material, material.id, condition=lambda m: m.status != MaterialStatus.PROCESSING, job_stage="QUEUED")

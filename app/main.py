@@ -26,7 +26,7 @@ from app.workflow import run_auto_job
 from app.engines import DraftRequest, Engine, EngineError, MaterialInput, create_engine
 from app.models import ArticleDraft, ArticleMode, EditorialStyleProfile, Transcript
 from app.render import render_html, render_markdown
-from app.store import DEFAULT_STYLE_ID, AutoSettings, Material, MaterialStatus, Store, StyleProfileRecord, seed_builtin_styles
+from app.store import DEFAULT_STYLE_ID, AutoSettings, ConditionFailed, Material, MaterialStatus, Store, StyleProfileRecord, seed_builtin_styles
 from app.transcript import TranscriptParseError, parse_transcript
 from app.verification import VerificationReport, verify_draft
 
@@ -276,15 +276,20 @@ def create_app(
             style=get_style(store, profile_id),
             target_words=options.target_words,
         )
-        queued = store.update(
-            Material,
-            material.id,
-            status=MaterialStatus.PROCESSING,
-            job_stage=auto.Stage.QUEUED.value,
-            job_error=None,
-            style_profile_id=profile_id,
-            auto_settings=options.model_copy(update={"style_profile_id": profile_id or ""}),
-        )
+        try:
+            queued = store.update(
+                Material,
+                material.id,
+                # Sprawdzane atomowo: dwa równoczesne uruchomienia nie mogą zakolejkować dwóch zadań.
+                condition=lambda current: current.status != MaterialStatus.PROCESSING,
+                status=MaterialStatus.PROCESSING,
+                job_stage=auto.Stage.QUEUED.value,
+                job_error=None,
+                style_profile_id=profile_id,
+                auto_settings=options.model_copy(update={"style_profile_id": profile_id or ""}),
+            )
+        except ConditionFailed as error:
+            raise HTTPException(status_code=409, detail="Automat już przetwarza ten materiał") from error
         if queued is None:
             raise HTTPException(status_code=404, detail="Nie ma takiego materiału")
         request.app.state.runner.submit(
@@ -440,12 +445,12 @@ def create_app(
 
     @app.post("/api/materials/{material_id}/approve")
     def approve(
-        version: str | None = Query(None, description="updated_at materiału oglądanego przez redaktora"),
+        version: int | None = Query(None, description="revision materiału oglądanego przez redaktora"),
         material: Material = Depends(get_material),
         store: Store = Depends(get_store),
     ) -> MaterialView:
         _ensure_idle(material)
-        if version is not None and version != material.updated_at:
+        if version is not None and version != material.revision:
             raise HTTPException(status_code=409, detail="Draft zmienił się od wyświetlenia – odśwież i sprawdź go ponownie")
         if material.draft is None or material.report is None or not material.report.ok:
             raise HTTPException(status_code=409, detail="Zatwierdzić można tylko draft, który przeszedł weryfikację")
@@ -531,7 +536,6 @@ def create_app(
             source=url or (file.filename if has_file else ""),
             external_processing_allowed=consent,
             style_profile_id=style_profile_id or None,
-            status=MaterialStatus.PROCESSING,
         )
         source = url
         if has_file:

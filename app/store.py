@@ -78,6 +78,8 @@ class Material(BaseModel):
     report: VerificationReport | None = None
     created_at: str = Field(default_factory=_now)
     updated_at: str = Field(default_factory=_now)
+    # Licznik zapisów – wersja dla zatwierdzania (updated_at ma dokładność sekundy).
+    revision: int = 0
 
 
 class StyleProfileRecord(BaseModel):
@@ -92,6 +94,10 @@ class StyleProfileRecord(BaseModel):
 T = TypeVar("T", bound=BaseModel)
 
 _TABLES = {Material: "materials", StyleProfileRecord: "style_profiles"}
+
+
+class ConditionFailed(Exception):
+    """Warunek atomowej aktualizacji niespełniony (stan zmienił się w międzyczasie)."""
 
 
 class Store:
@@ -110,6 +116,9 @@ class Store:
     def save(self, record: BaseModel) -> None:
         if isinstance(record, Material):
             record.updated_at = _now()
+            with self._lock:
+                row = self._conn.execute("SELECT data FROM materials WHERE id = ?", (record.id,)).fetchone()
+            record.revision = (Material.model_validate_json(row[0]).revision + 1) if row else max(record.revision, 1)
         table = _TABLES[type(record)]
         with self._lock, self._conn:
             self._conn.execute(
@@ -127,20 +136,25 @@ class Store:
             rows = self._conn.execute(f"SELECT data FROM {_TABLES[model]} ORDER BY updated_at DESC").fetchall()
         return [model.model_validate_json(r[0]) for r in rows]
 
-    def update(self, model: type[T], record_id: str, **fields) -> T | None:
+    def update(self, model: type[T], record_id: str, condition=None, **fields) -> T | None:
         """Atomowy odczyt i zapis zmienionych pól; None, gdy rekordu już nie ma.
 
         Osobne get + save pozwalałyby zadaniu w tle "wskrzesić" rekord usunięty
-        przez redaktora między odczytem a zapisem.
+        przez redaktora między odczytem a zapisem. `condition(aktualny)` sprawdzany
+        w tej samej transakcji – gdy zwróci False, rzucamy `ConditionFailed`.
         """
         table = _TABLES[model]
         with self._lock, self._conn:
             row = self._conn.execute(f"SELECT data FROM {table} WHERE id = ?", (record_id,)).fetchone()
             if row is None:
                 return None
-            record = model.model_validate_json(row[0]).model_copy(update=fields)
+            current = model.model_validate_json(row[0])
+            if condition is not None and not condition(current):
+                raise ConditionFailed(record_id)
+            record = current.model_copy(update=fields)
             if isinstance(record, Material):
                 record.updated_at = _now()
+                record.revision = current.revision + 1
             self._conn.execute(
                 f"UPDATE {table} SET data = ?, updated_at = ? WHERE id = ?",
                 (record.model_dump_json(), _now(), record_id),

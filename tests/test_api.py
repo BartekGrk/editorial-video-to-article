@@ -77,13 +77,12 @@ def test_approve_requires_viewed_version(client, raw_transcript):
     mid = client.post("/api/materials", json={"title": "x", "transcript_raw": raw_transcript}).json()["id"]
     viewed = client.post(f"/api/materials/{mid}/draft", json={"mode": "SHORT"}).json()["material"]
     newer = {**viewed["draft"], "lead": viewed["draft"]["lead"] + " Zmiana z innej karty."}
-    import time
-
-    time.sleep(1.1)  # updated_at ma dokładność sekundy
+    # zapis w tej samej sekundzie – wersja to licznik zapisów, nie znacznik czasu
     client.put(f"/api/materials/{mid}/draft", json=newer)
-    assert client.post(f"/api/materials/{mid}/approve", params={"version": viewed["updated_at"]}).status_code == 409
+    assert client.post(f"/api/materials/{mid}/approve", params={"version": viewed["revision"]}).status_code == 409
     current = client.get(f"/api/materials/{mid}").json()
-    assert client.post(f"/api/materials/{mid}/approve", params={"version": current["updated_at"]}).status_code == 200
+    assert current["revision"] > viewed["revision"]
+    assert client.post(f"/api/materials/{mid}/approve", params={"version": current["revision"]}).status_code == 200
 
 
 def test_settings_update_does_not_resurrect_deleted(client, raw_transcript):

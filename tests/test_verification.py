@@ -475,3 +475,21 @@ def test_tenth_review_regressions(draft, transcript):
     # cudzysłów rozbity na dwie linie akapitu
     draft.sections[0].paragraphs.append("Kowalski powiedział: „Rząd nas okrada\ni nic z tym nie robi od lat”.")
     assert not verify_draft(draft, transcript).ok
+
+
+def test_eleventh_review_cases(draft, transcript):
+    # przypisanie na początku drugiej linii, potem zmyślona wypowiedź
+    draft.sections[0].paragraphs.append(
+        "„Oddaję, bo automat jest w sklepie obok domu”\n- mówi Przechodzień 1. - System kaucyjny to oszustwo i kradzież."
+    )
+    assert not verify_draft(draft, transcript).ok
+    draft.sections[0].paragraphs.pop()
+    # różne cudzysłowy w dwóch liniach nie łączą się w jeden cytat
+    draft.sections[0].paragraphs.append(
+        '„Oddaję, bo automat jest w sklepie obok domu" – mówi rozmówca.\nInny odpowiada “Za te trzydzieści groszy nie będę stać w kolejce”.'
+    )
+    assert verify_draft(draft, transcript).ok
+    draft.sections[0].paragraphs.pop()
+    # krótka nazwa własna złamana między liniami to nie cytat
+    draft.sections[0].paragraphs.append("Rolnicy korzystają z programu „Czyste\nPowietrze” od lat.")
+    assert verify_draft(draft, transcript).ok

@@ -24,6 +24,7 @@ _NON_WORD = re.compile(r"[^\w]+", re.UNICODE)
 _INLINE_QUOTE = re.compile(
     r"„([^”“„]+)[”“]|„([^”“„\"]+)\"|“([^”]+)”|\"([^\"]+)\"|»([^«]+)«|«([^»]+)»"
 )
+_CROSS_LINE_QUOTE = re.compile(r"„([^”“„\"\n]*\n[^”“„\"\n]*)[”“]|“([^”“„\"\n]*\n[^”“„\"\n]*)”")
 # Krótkie frazy w cudzysłowie to zwykle nazwy własne (programy, ustawy),
 # a nie cytaty; sprawdzamy tylko wypowiedzi od 4 słów.
 _MIN_INLINE_QUOTE_WORDS = 4
@@ -351,11 +352,14 @@ def dash_quotes(paragraph: str, speakers=(), starts_paragraph: bool = True) -> l
         parts = _DASH_SPLIT.split(content)
         flags = [False] + [_is_attribution(part, names, i == len(parts) - 1) for i, part in enumerate(parts) if i > 0]
         # Dalsze linie akapitu od małej litery bez przypisania to zwykle lista, nie wypowiedź.
-        if (number > 0 or not starts_paragraph) and not (_SENTENCE_START.match(content) or any(flags)):
+        opens_with_attribution = bool(_ATTRIBUTION.match(content))
+        if (number > 0 or not starts_paragraph) and not (
+            _SENTENCE_START.match(content) or any(flags) or opens_with_attribution
+        ):
             continue
         # Linia zaczynająca się od przypisania ("- mówi Jan Kowalski." pod cytatem w cudzysłowie)
         # – pierwszy fragment to przypisanie; dalsze fragmenty po myślnikach nadal sprawdzamy.
-        current: str | None = None if _ATTRIBUTION.match(content) else parts[0]
+        current: str | None = None if opens_with_attribution else parts[0]
         for index in range(1, len(parts)):
             part = parts[index]
             if flags[index]:
@@ -416,11 +420,12 @@ def extract_inline_quotes(draft: ArticleDraft, speakers=()) -> list[tuple[str, s
             # też najkrótsze; może zawierać wtrącenia w cudzysłowie – sprawdzamy całość.
             dash = dash_quotes(line, labels, starts_paragraph=line_no == 0)
             found += [(location, q, "dash", line) for q in dash if normalize(q)]
-        # Cudzysłów otwarty w jednej linii akapitu i zamknięty w następnej.
-        for match in _INLINE_QUOTE.finditer(text):
-            quoted = next(g for g in match.groups() if g is not None).strip()
-            if "\n" in match.group(0) and normalize(quoted):
-                found.append((location, " ".join(quoted.split()), "quote", text))
+        # Cudzysłów otwarty w jednej linii akapitu i zamknięty w następnej (bez innych
+        # cudzysłowów po drodze – inaczej łączylibyśmy dwa różne cytaty).
+        for match in _CROSS_LINE_QUOTE.finditer(text):
+            quoted = " ".join(next(g for g in match.groups() if g is not None).split())
+            if len(normalize(quoted).split()) >= _MIN_INLINE_QUOTE_WORDS or normalize(quoted) in declared:
+                found.append((location, quoted, "quote", text))
     return found
 
 

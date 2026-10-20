@@ -340,6 +340,7 @@ function stillOn(hash) {
 function setMaterial(material) {
   if (!stillOn(`#/m/${material.id}`)) return false;
   state.material = material;
+  state.dirty = false;
   return true;
 }
 
@@ -348,6 +349,7 @@ async function renderWorkspace(id) {
   const [material, profiles] = await Promise.all([api(`/api/materials/${id}`), api("/api/style-profiles")]);
   if (!stillOn(`#/m/${id}`)) return;
   state.material = material;
+  state.dirty = false;
   state.profiles = profiles;
   if (material.status === "PROCESSING" || (material.status === "FAILED" && !material.transcript)) {
     drawProcessing(material);
@@ -645,6 +647,8 @@ function drawDraft(root) {
     ${generatorCard(m)}`;
 
   const form = root.querySelector("#draft-form");
+  // Stan formularza tuż po narysowaniu (zapisany draft) – do wykrycia niezapisanych zmian.
+  const savedState = JSON.stringify(readDraft(form));
   const updateCount = () => {
     const text = [...form.querySelectorAll(".paragraphs")].map((t) => t.value).join(" ") + " " + form.querySelector("#lead").value;
     form.querySelector("#wordcount").textContent = `${text.split(/\s+/).filter(Boolean).length} słów (lead + treść)`;
@@ -668,8 +672,11 @@ function drawDraft(root) {
     });
   });
   form.querySelector("#approve").addEventListener("click", (e) => busy(e.target, "…", async () => {
-    const version = encodeURIComponent(m.updated_at);
-    if (!setMaterial(await api(`/api/materials/${m.id}/approve?version=${version}`, { method: "POST" }))) return;
+    // Zatwierdzamy zapisaną, zweryfikowaną wersję – niezapisane zmiany najpierw "Zapisz i sprawdź".
+    if (state.dirty || JSON.stringify(readDraft(form)) !== savedState) {
+      throw new Error("Masz niezapisane zmiany – kliknij „Zapisz i sprawdź”, a potem zatwierdź.");
+    }
+    if (!setMaterial(await api(`/api/materials/${m.id}/approve?version=${m.revision}`, { method: "POST" }))) return;
     drawWorkspace();
     toast("Draft zatwierdzony");
   }));
@@ -713,6 +720,7 @@ function mutateDraft(change) {
   draft.title_options = [...form.querySelectorAll(".title-input")].map((i) => i.value.trim());
   change(draft);
   state.material = { ...state.material, draft };
+  state.dirty = true;  // zmiana struktury (np. usunięty cytat) jest tylko lokalna do czasu zapisu
   drawWorkspace();
 }
 
