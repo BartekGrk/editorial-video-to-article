@@ -57,14 +57,21 @@ _OWN_TITLE_SUFFIX = re.compile(
 _QUOTED = re.compile(r"[„“\"»«][^„”“\"»«]*[”“\"«»]")
 
 
+def _unquoted(text: str) -> str:
+    # Cytat z tytułu lub tematu redaktora (albo z YouTube) nie przechodzi do tytułów i leadu:
+    # nie wiemy, czy padł w nagraniu dosłownie, a weryfikacja traktuje każdy cudzysłów jako cytat.
+    text = _QUOTED.sub(" ", text or "")
+    text = re.split(r"[„“\"»«]", text)[0]  # niezamknięty cudzysłów
+    return " ".join(text.split()).strip(" .?!:,;–-")
+
+
+def _topic(material: MaterialInput) -> str:
+    return _unquoted(material.topic)
+
+
 def _subject(material: MaterialInput) -> str:
-    # Cytat z tytułu redaktora (lub z YouTube) nie przechodzi do tytułów i leadu: nie wiemy,
-    # czy padł w nagraniu dosłownie, a weryfikacja traktuje każdy cudzysłów jako cytat.
-    title = _OWN_TITLE_SUFFIX.sub("", (material.title or "").strip())
-    title = _QUOTED.sub(" ", title)
-    title = re.split(r"[„“\"»«]", title)[0]  # niezamknięty cudzysłów
-    title = " ".join(title.split()).strip(" .?!:,;–-")
-    subject = title or (material.topic or "").strip(" .?!:,;–-") or "Materiał wideo"
+    title = _unquoted(_OWN_TITLE_SUFFIX.sub("", (material.title or "").strip()))
+    subject = title or _topic(material) or "Materiał wideo"
     return subject[:1].upper() + subject[1:]
 
 
@@ -239,7 +246,7 @@ class HeuristicEngine:
         )
         if title_quote:
             titles.append(f"{short_subject}. „{title_quote.text}”")
-        topic = _clip((material.topic or subject).strip().rstrip(" .?!:,;–-"))
+        topic = _clip(_topic(material) or subject)
         titles.append(f"{topic[:1].upper() + topic[1:]}. Co mówią rozmówcy w nagraniu")
         if 4 <= word_count(subject) <= _MAX_TITLE_WORDS:
             titles.append(subject)

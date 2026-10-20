@@ -11,6 +11,7 @@ from pathlib import Path
 
 from app import auto
 from app.engines.base import Engine, MaterialInput
+from app.format_check import approval_blockers
 from app.media import Transcriber
 from app.store import Material, MaterialStatus, Store
 from app.transcript import parse_transcript
@@ -80,12 +81,19 @@ def run_auto_job(
             engine, material_input, options, material.transcript_notes, stage
         )
 
-        # Automat zatwierdza tylko draft bez żadnych wątpliwości co do cytatów i ich mówców.
-        approved = auto_approve and result.report.strict_ok
+        # Automat zatwierdza tylko draft bez żadnych wątpliwości co do cytatów i ich mówców
+        # i z treścią nadającą się do publikacji.
+        draft = result.draft
+        blockers = approval_blockers(draft)
+        approved = auto_approve and result.report.strict_ok and not blockers
+        if auto_approve and blockers:
+            draft = draft.model_copy(
+                update={"editor_notes": [*draft.editor_notes, *(f"Automat nie zatwierdził: {b}" for b in blockers)]}
+            )
         fields = {
             "evidence": evidence,
             "mode": mode,
-            "draft": result.draft,
+            "draft": draft,
             "report": result.report,
             "status": MaterialStatus.APPROVED if approved else MaterialStatus.DRAFTED,
             "job_stage": auto.Stage.DONE.value,

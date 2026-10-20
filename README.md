@@ -45,7 +45,7 @@ Na stronie głównej, w sekcji **„Automatycznie z nagrania”**, podajesz plik
 5. **wybór trybu** SHORT/FULL według wartości informacyjnej materiału (można wymusić);
 6. **draft w stylu WP Finanse** (wbudowany profil stylu);
 7. **weryfikacja** cytatów (także akapitów dialogowych z myślnikiem) oraz automatyczna korekta timecode'ów; przy błędach albo wyraźnych odstępstwach od formatu model dostaje jedną rundę poprawki;
-8. **zatwierdzenie**, jeśli weryfikacja nie wykryła błędów. Wtedy draft jest gotowy do eksportu (Markdown/HTML) w CMS.
+8. **zatwierdzenie**, jeśli weryfikacja nie wykryła błędów, a draft ma co najmniej jeden cytat i nie jest pustym szablonem (min. 15 słów). Wtedy draft jest gotowy do eksportu (Markdown/HTML) w CMS; w przeciwnym razie zostaje draftem z uwagą „Automat nie zatwierdził: …”.
 
 Postęp etapów widać w aplikacji. Przy błędzie materiał ma status „Błąd” z opisem i przyciskiem „Spróbuj ponownie”. Dla materiału z gotową transkrypcją automat uruchamia przycisk **⚡ Automat**.
 

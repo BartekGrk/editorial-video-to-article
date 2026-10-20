@@ -15,7 +15,23 @@ FULL_WORDS = (250, 1000)
 FULL_LEAD_WORDS = (20, 70)
 FULL_HEADINGS = (2, 6)
 TITLE_WORDS = (4, 14)
+# Poniżej tego automat nie zatwierdza – to już pusty szablon, nie krótki tekst pod wideo.
+MIN_APPROVE_WORDS = SHORT_WORDS[0] // 2
 
+
+def approval_blockers(draft: ArticleDraft) -> list[str]:
+    """Powody, dla których automat nie zatwierdzi draftu mimo poprawnych cytatów.
+
+    Zbyt mało materiału (same krótkie odpowiedzi, brak cytatów) daje pusty szablon,
+    który nie nadaje się do publikacji bez pracy redaktora.
+    """
+    blockers = []
+    total = word_count(draft.lead) + sum(word_count(p) for s in draft.sections for p in s.paragraphs)
+    if not draft.quotes:
+        blockers.append("Draft nie zawiera żadnego cytatu z nagrania.")
+    if total < MIN_APPROVE_WORDS:
+        blockers.append(f"Tekst ma tylko {total} słów – za mało do publikacji.")
+    return blockers
 
 
 def format_warnings(draft: ArticleDraft) -> list[str]:

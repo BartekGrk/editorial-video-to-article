@@ -473,3 +473,29 @@ def test_auto_upload_without_profile(auto_client):
     )
     assert response.status_code == 202
     assert client.get(f"/api/materials/{response.json()['id']}").json()["style_profile_id"] == ""
+
+
+def test_quoted_topic_does_not_break_verification(raw_transcript):
+    store = Store(":memory:")
+    client = TestClient(create_app(store, HeuristicEngine(), FakeTranscriber(), InlineRunner()))
+    material = Material(
+        title="„Nie będę stać w kolejce dla groszy”",
+        topic="„Nikt nie oddaje butelek” w sklepach",
+        transcript_raw=raw_transcript,
+    )
+    store.save(material)
+    client.post(f"/api/materials/{material.id}/auto", json={})
+    current = client.get(f"/api/materials/{material.id}").json()
+    assert current["report"]["ok"], current["report"]
+    assert current["status"] == "APPROVED"
+
+
+def test_auto_does_not_approve_empty_draft():
+    store = Store(":memory:")
+    client = TestClient(create_app(store, HeuristicEngine(), FakeTranscriber(), InlineRunner()))
+    material = Material(title="Kaucja w sklepach", transcript_raw="[00:00:05] Jan: Tak.\n[00:00:12] Anna: Nie.")
+    store.save(material)
+    client.post(f"/api/materials/{material.id}/auto", json={})
+    current = client.get(f"/api/materials/{material.id}").json()
+    assert current["status"] == "DRAFTED"
+    assert any(n.startswith("Automat nie zatwierdził") for n in current["draft"]["editor_notes"])
