@@ -47,11 +47,16 @@ _SHORT_MAX_WORDS = 90
 _MAX_THREADS = 4
 
 
+# Dopiski, które ten silnik dokleja do tematu w tytułach. Automat zapisuje pierwszą propozycję
+# tytułu jako tytuł materiału, więc przy kolejnym uruchomieniu zdejmujemy je, zamiast doklejać ponownie.
+_OWN_TITLE_SUFFIX = re.compile(
+    r"\.\s+(?:„[^”]*”|Co mówią rozmówcy w nagraniu|Najważniejsze wypowiedzi z nagrania)\s*$"
+)
+
+
 def _subject(material: MaterialInput) -> str:
-    # Automat zapisuje pierwszą propozycję tytułu jako tytuł materiału; temat to część przed
-    # ". " lub cytatem – inaczej każde kolejne generowanie dokładałoby cytat do tytułu.
-    title = re.split(r"\.\s|„", material.title or "")[0]
-    return _clip((title or material.topic or "Materiał wideo").strip().rstrip(" .?!:,;–-"))
+    title = _OWN_TITLE_SUFFIX.sub("", (material.title or "").strip())
+    return (title or material.topic or "Materiał wideo").strip().rstrip(" .?!:,;–-")
 
 
 def _clip(text: str, words: int = _MAX_SUBJECT_WORDS) -> str:
@@ -102,9 +107,9 @@ def _threads(guests: list[TranscriptSegment], quotes: list[Quote]) -> list[Threa
     return threads
 
 
-def _heading(text: str) -> str:
+def _heading(text: str, words: int = 6) -> str:
     # Śródtytuł z pierwszych słów wypowiedzi – szablon do zmiany przez redaktora.
-    return " ".join(text.split()[:6]).rstrip(",;:") + "…"
+    return " ".join(text.split()[:words]).rstrip(",;:") + "…"
 
 
 def _is_host(segment: TranscriptSegment) -> bool:
@@ -219,16 +224,19 @@ class HeuristicEngine:
         short_quotes = [q for q in quotes if word_count(q.text) <= _MAX_TITLE_QUOTE_WORDS]
         # Tytuły w typowej długości WP (4–14 słów): z cytatem, z tematem, sam temat tylko gdy dość długi.
         titles = []
-        title_quote = next((q for q in short_quotes if word_count(subject) + word_count(q.text) <= _MAX_TITLE_WORDS), None)
+        short_subject = _clip(subject)
+        title_quote = next(
+            (q for q in short_quotes if word_count(short_subject) + word_count(q.text) <= _MAX_TITLE_WORDS), None
+        )
         if title_quote:
-            titles.append(f"{subject}. „{title_quote.text}”")
+            titles.append(f"{short_subject}. „{title_quote.text}”")
         topic = _clip((material.topic or subject).strip().rstrip(" .?!:,;–-"))
         titles.append(f"{topic[:1].upper() + topic[1:]}. Co mówią rozmówcy w nagraniu")
-        if word_count(subject) >= 4:
+        if 4 <= word_count(subject) <= _MAX_TITLE_WORDS:
             titles.append(subject)
         titles = list(dict.fromkeys(titles))
         if len(titles) < 2:
-            titles.append(f"{subject}. Najważniejsze wypowiedzi z nagrania")
+            titles.append(f"{short_subject}. Najważniejsze wypowiedzi z nagrania")
 
         lead = f"{subject} – materiał wideo."
         if quotes:
@@ -250,9 +258,9 @@ class HeuristicEngine:
                 # Wątek mówcy ma jego nazwę; w pozostałych śródtytuł z pierwszego cytatu tej sekcji
                 # (pierwszy cytat wątku mógł już trafić do leadu).
                 named = any(q.speaker == thread.name for q in thread_quotes)
-                # Krótki cytat w śródtytule powtórzyłby akapit pod nim – wtedy sekcja bez śródtytułu.
+                # Krótki cytat w całości powtórzyłby akapit pod nim – wtedy tylko jego początek.
                 longer = next((q for q in thread_quotes if word_count(q.text) > 8), None)
-                heading = thread.name if named else (_heading(longer.text) if longer else None)
+                heading = thread.name if named else (_heading(longer.text) if longer else _heading(thread_quotes[0].text, 4))
                 sections.append(
                     Section(heading=heading, paragraphs=[f"- {q.text} - {_attribution(q)}." for q in thread_quotes])
                 )

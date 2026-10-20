@@ -12,7 +12,7 @@ from app.engines import HeuristicEngine
 from app.jobs import InlineRunner
 from app.main import create_app
 from app.media import AsrSegment, merge_asr_segments
-from app.models import ArticleDraft, SpeakerLabel, SpeakerLabels, TranscriptSegment
+from app.models import ArticleDraft, ArticleMode, SpeakerLabel, SpeakerLabels, TranscriptSegment
 from app.store import AutoSettings, Material, MaterialStatus, Store
 
 needs_ffmpeg = pytest.mark.skipif(shutil.which("ffmpeg") is None, reason="wymaga ffmpeg")
@@ -390,6 +390,8 @@ def test_title_from_filename_drops_camera_noise():
     assert title_from_filename("800-plus.mp4") == "800 plus"
     assert title_from_filename("budzet-2025.mp4") == "Budzet 2025"
     assert title_from_filename("wywiad(1).mp4") == "Wywiad"
+    assert title_from_filename("2025-01-15 sonda.mp4") == "Sonda"
+    assert title_from_filename("Screen Recording 2025-01-15 at 14.30.22.mov") == "Nagranie"
 
 
 def test_demo_titles_stay_stable_and_within_wp_length(raw_transcript):
@@ -410,3 +412,50 @@ def test_demo_titles_stay_stable_and_within_wp_length(raw_transcript):
         assert not [w for w in format_warnings(draft) if w.startswith("Tytuł")]
         assert not any("?." in t or ".." in t for t in draft.title_options)
     assert len(set(titles)) == 1
+
+
+def test_demo_subject_keeps_editor_title_with_abbreviations():
+    from app import pipeline
+    from app.engines import DraftRequest, MaterialInput
+    from app.transcript import parse_transcript
+
+    engine = HeuristicEngine()
+    transcript = parse_transcript("[00:00:05] Jan Kowalski: Oddaję butelki, bo automat jest w sklepie obok domu.")
+    for title in ("Prof. Kowalski o inflacji", "„Nie oddaję butelek” – sonda o kaucji", "Ceny prądu w 2025 r. wzrosną"):
+        material = MaterialInput(title=title, transcript=transcript)
+        evidence = pipeline.analyze(engine, material)
+        draft = engine.write_draft(DraftRequest(material=material, evidence=evidence, mode=ArticleMode.SHORT))
+        assert draft.lead.startswith(title.rstrip(". ")), draft.lead
+
+
+def test_retry_keeps_no_profile_from_older_rows(raw_transcript):
+    """Wiersze sprzed rozróżnienia null/"" mają brak profilu tylko w auto_settings."""
+    store = Store(":memory:")
+    client = TestClient(create_app(store, HeuristicEngine(), FakeTranscriber(), InlineRunner()))
+    material = Material(
+        title="x",
+        transcript_raw=raw_transcript,
+        status=MaterialStatus.FAILED,
+        style_profile_id=None,
+        auto_settings=AutoSettings(style_profile_id="", auto_approve=False),
+    )
+    store.save(material)
+    client.post(f"/api/materials/{material.id}/retry")
+    assert client.get(f"/api/materials/{material.id}").json()["style_profile_id"] == ""
+
+
+def test_unknown_explicit_profile_is_rejected(client, raw_transcript):
+    mid = client.post("/api/materials", json={"title": "x", "transcript_raw": raw_transcript}).json()["id"]
+    assert client.post(f"/api/materials/{mid}/draft", json={"mode": "SHORT", "style_profile_id": "nope"}).status_code == 404
+    assert client.post(f"/api/materials/{mid}/auto", json={"style_profile_id": "nope"}).status_code == 404
+    assert client.get(f"/api/materials/{mid}").json()["style_profile_id"] is None
+
+
+@needs_ffmpeg
+def test_auto_upload_without_profile(auto_client):
+    client = auto_client()
+    response = client.post(
+        "/api/auto", data={"style_profile_id": "__none__"}, files={"file": ("a.wav", _wav_bytes(), "audio/wav")}
+    )
+    assert response.status_code == 202
+    assert client.get(f"/api/materials/{response.json()['id']}").json()["style_profile_id"] == ""

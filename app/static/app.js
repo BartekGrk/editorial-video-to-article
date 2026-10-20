@@ -530,9 +530,11 @@ function analyze(button) {
 
 // Profil, którego użyje serwer: zapisany w materiale; null oznacza domyślny, "" – świadomie bez profilu.
 function effectiveProfile(m) {
-  if (m.style_profile_id) return m.style_profile_id;
+  const exists = (id) => state.profiles?.some((p) => p.id === id);
+  // Usunięty profil: serwer użyje domyślnego, więc tak samo podpowiadamy w formularzu.
+  if (m.style_profile_id && exists(m.style_profile_id)) return m.style_profile_id;
   if (m.style_profile_id === "") return "";
-  return state.profiles?.some((p) => p.id === DEFAULT_PROFILE) ? DEFAULT_PROFILE : "";
+  return exists(DEFAULT_PROFILE) ? DEFAULT_PROFILE : "";
 }
 
 function generatorCard(m) {

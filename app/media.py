@@ -46,7 +46,8 @@ class FetchedMedia:
 
 # Szum w nazwach plików: prefiks aparatu z numerami na początku, wersja lub kopia na końcu.
 # Liczby w środku i na końcu nazwy zostają ("800-plus", "budzet-2025").
-_CAMERA_PREFIX = re.compile(r"img|vid|mov|mvi|dsc[nf]?|pxl|gopr\d*|screen ?recording", re.I)
+_CAMERA_PREFIX = re.compile(r"img|vid|mov|mvi|dsc[nf]?|pxl|gopr\d*|screen ?recording|nagranie ekranu", re.I)
+_YEAR = re.compile(r"(?:19|20)\d\d")
 _TRAILING_NOISE = re.compile(r"final|v\d+|copy|kopia|edit|\(\d+\)|\d{6,}", re.I)
 
 
@@ -54,10 +55,16 @@ def title_from_filename(name: str) -> str:
     """Tytuł roboczy z nazwy pliku: "IMG_0412_sonda-kaucja_FINAL.mp4" → "Sonda kaucja"."""
     stem = re.sub(r"\(\d+\)$", "", Path(name).stem)
     words = [w for w in re.split(r"[\s_\-.]+", stem) if w]
-    if words and _CAMERA_PREFIX.fullmatch(words[0]):
-        words.pop(0)
-        while words and words[0].isdigit():
-            words.pop(0)
+    for size in (2, 1):
+        if len(words) >= size and _CAMERA_PREFIX.fullmatch(" ".join(words[:size])):
+            del words[:size]
+            # Po prefiksie aparatu zwykle data i godzina ("2025-01-15 at 14.30.22").
+            while words and (words[0].isdigit() or words[0].lower() in ("at", "o")):
+                words.pop(0)
+            break
+    # Data na początku nazwy ("2025-01-15 sonda"); sam rok przed treścią zostaje ("2025 budżet").
+    if len(words) >= 3 and _YEAR.fullmatch(words[0]) and words[1].isdigit() and len(words[1]) <= 2:
+        del words[:3 if words[2].isdigit() and len(words[2]) <= 2 else 2]
     while words and _TRAILING_NOISE.fullmatch(words[-1]):
         words.pop()
     if not words:

@@ -156,6 +156,9 @@ def _ensure_consent(engine: Engine, material: Material) -> None:
         )
 
 
+NO_PROFILE = "__none__"
+
+
 def _form_bool(value: str, name: str) -> bool:
     normalized = value.strip().lower()
     if normalized in ("true", "1", "on", "yes"):
@@ -279,6 +282,11 @@ def create_app(
         if material_profile and store.get(StyleProfileRecord, material_profile):
             return material_profile
         return DEFAULT_STYLE_ID if store.get(StyleProfileRecord, DEFAULT_STYLE_ID) else None
+
+    def ensure_style_exists(store: Store, explicit: str | None) -> None:
+        """Profil wskazany wprost w żądaniu musi istnieć (literówka nie może po cichu dać innego stylu)."""
+        if explicit:
+            get_style(store, explicit)
 
     def start_auto_job(
         request: Request, material: Material, options: AutoRunOptions, source: str | None = None
@@ -429,6 +437,7 @@ def create_app(
         _ensure_consent(engine, material)
         material_input = _material_input(material)
         evidence = material.evidence or _engine_call(pipeline.analyze, engine, material_input)
+        ensure_style_exists(store, options.style_profile_id)
         profile_id = resolve_style_id(store, options.style_profile_id, material.style_profile_id)
         request = DraftRequest(
             material=material_input,
@@ -550,7 +559,9 @@ def create_app(
             run_mode = ArticleMode(mode) if mode else None
         except ValueError as error:
             raise HTTPException(status_code=422, detail="Tryb: SHORT, FULL albo pusty (automatyczny)") from error
-        get_style(store, style_profile_id or None)
+        # Formularz nie przenosi null: puste pole = profil domyślny, NO_PROFILE = świadomie bez profilu.
+        chosen_style = "" if style_profile_id == NO_PROFILE else style_profile_id or None
+        get_style(store, chosen_style)
 
         material = Material(
             title=title.strip() or (title_from_filename(file.filename) if has_file else "Nagranie z linku"),
@@ -560,7 +571,7 @@ def create_app(
             angle=angle,
             source=url or (file.filename if has_file else ""),
             external_processing_allowed=consent,
-            style_profile_id=style_profile_id or None,
+            style_profile_id=chosen_style,
         )
         source = url
         if has_file:
@@ -583,7 +594,7 @@ def create_app(
             # Zapisany od razu: odtwarzanie w UI i ponowienie automatu po błędzie.
             material.media_file = str(target.relative_to(request.app.state.media_dir))
         store.save(material)
-        options = AutoRunOptions(mode=run_mode, style_profile_id=style_profile_id or None, auto_approve=approve_when_ok)
+        options = AutoRunOptions(mode=run_mode, style_profile_id=chosen_style, auto_approve=approve_when_ok)
         return _view(start_auto_job(request, material, options, source))
 
     @app.post("/api/materials/{material_id}/auto", status_code=202)
@@ -596,6 +607,7 @@ def create_app(
         if not material.transcript_raw.strip():
             raise HTTPException(status_code=409, detail="Materiał nie ma transkrypcji")
         _transcript(material)
+        ensure_style_exists(request.app.state.store, options.style_profile_id)
         return _view(start_auto_job(request, material, options))
 
     @app.post("/api/materials/{material_id}/retry", status_code=202)
@@ -604,8 +616,11 @@ def create_app(
         if material.status != MaterialStatus.FAILED:
             raise HTTPException(status_code=409, detail="Ponowić można tylko automat zakończony błędem")
         _ensure_consent(request.app.state.engine, material)
-        # Profil bierzemy z materiału: redaktor mógł go zmienić w ustawieniach po błędzie.
-        options = (material.auto_settings or AutoRunOptions()).model_copy(update={"style_profile_id": None})
+        # Profil z materiału: redaktor mógł go zmienić w ustawieniach po błędzie. Gdy materiał
+        # nie ma zapisanego wyboru (None), obowiązuje ten z ostatniego uruchomienia ("" = bez profilu).
+        options = material.auto_settings or AutoRunOptions()
+        if material.style_profile_id is not None:
+            options = options.model_copy(update={"style_profile_id": material.style_profile_id})
         if material.transcript_raw.strip():
             return _view(start_auto_job(request, material, options))
         media = request.app.state.media_dir / material.media_file if material.media_file else None
