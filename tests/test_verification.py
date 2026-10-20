@@ -232,7 +232,7 @@ def test_third_review_regressions(draft, transcript):
     assert dash_quotes("Najważniejsze zmiany:\n- wyższy próg podatkowy\n- niższa stawka VAT") == []
     # przypisanie formą przeszłą i samym nazwiskiem
     assert dash_quotes("- Inflacja spada - podkreślał Jan Kowalski.") == ["Inflacja spada"]
-    assert dash_quotes("- Inflacja spada - Jan Kowalski, ekonomista.") == ["Inflacja spada"]
+    assert dash_quotes("- Inflacja spada - Jan Kowalski, ekonomista.", ["Jan Kowalski"]) == ["Inflacja spada"]
     # dwa cytaty w jednym akapicie nie sklejają się
     draft.lead = 'Jak mówi Jan, „inflacja spada powoli ale stale". Dodał też „ceny prądu wzrosną w przyszłym roku”.'
     quoted = [q for _, q in extract_inline_quotes(draft) if "inflacja" in q or "ceny" in q]
@@ -280,7 +280,9 @@ def test_fourth_review_dash_bypasses():
     ):
         d = ArticleDraft(mode="SHORT", title_options=["A b c d", "E f g h"], lead=paragraph, sections=[])
         assert not verify_draft(d, t).ok, paragraph
-    assert dash_quotes("- Ceny są za wysokie - Jan Kowalski, ekonomista z Warszawy.") == ["Ceny są za wysokie"]
+    assert dash_quotes("- Ceny są za wysokie - Jan Kowalski, ekonomista z Warszawy.", ["Jan Kowalski, ekonomista"]) == [
+        "Ceny są za wysokie"
+    ]
 
 
 def test_unlabelled_and_labelled_repeat_can_be_declared():
@@ -295,3 +297,49 @@ def test_unlabelled_and_labelled_repeat_can_be_declared():
     assert "Jan" in report.attribution_warnings[0]
     d.quotes.append(Quote(text=text, speaker="Jan", timecode_seconds=10))
     assert verify_draft(d, t).strict_ok
+
+
+def test_fifth_review_dash_rules():
+    from app.models import ArticleDraft, Transcript, TranscriptSegment
+    from app.verification import dash_quotes
+
+    t = Transcript(segments=[TranscriptSegment(start_seconds=0, speaker="Jan Kowalski", text="Ceny są za wysokie.")])
+    declared = [Quote(text="Ceny są za wysokie", speaker="Jan Kowalski", timecode_seconds=0)]
+    fabricated = (
+        "- Ceny są za wysokie - mówi Jan Kowalski i dodaje: - Rząd ukradł nam miliony złotych.",
+        "- Ceny są za wysokie - mówi Jan Kowalski - Rząd ukradł nam miliony złotych.",
+        "- Ceny są za wysokie - mówi Jan Kowalski. I dodaje - Rząd ukradł nam miliony złotych.",
+        "Narracja.\n- rząd ukradł nam miliony złotych - Jan Kowalski, rolnik.",
+        "- Ceny są za wysokie - Panie Premierze, oddaj nam nasze miliony!",
+    )
+    for paragraph in fabricated:
+        d = ArticleDraft(mode="SHORT", title_options=["A b c d", "E f g h"], lead=paragraph, sections=[], quotes=declared)
+        assert not verify_draft(d, t).ok, paragraph
+    # długie funkcje znanego mówcy nie są doklejane do cytatu
+    for role in ("ekspert ds. energetyki.", "ekonomista Banku Pekao S.A.", "główny ekonomista banku w Warszawie."):
+        d = ArticleDraft(
+            mode="SHORT",
+            title_options=["A b c d", "E f g h"],
+            lead=f"- Ceny są za wysokie - Jan Kowalski, {role}",
+            sections=[],
+            quotes=declared,
+        )
+        assert verify_draft(d, t).strict_ok, role
+    assert dash_quotes("- A b c - mówi X i dodaje: - D e f.") == ["A b c", "D e f."]
+
+
+def test_wrong_speaker_not_excused_by_unlabelled_repeat():
+    from app.models import ArticleDraft, Transcript, TranscriptSegment
+
+    text = "Za te trzydzieści groszy nie będę stać."
+    t = Transcript(
+        segments=[TranscriptSegment(start_seconds=0, text=text), TranscriptSegment(start_seconds=10, speaker="Jan", text=text)]
+    )
+    d = ArticleDraft(
+        mode="SHORT",
+        title_options=["A b c d", "E f g h"],
+        lead=f"- {text} - mówi Anna.",
+        sections=[],
+        quotes=[Quote(text=text, speaker="Anna", timecode_seconds=0)],
+    )
+    assert not verify_draft(d, t).strict_ok

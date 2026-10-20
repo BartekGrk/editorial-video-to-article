@@ -66,11 +66,6 @@ _VERB_GROUP = "(?:" + "|".join(_ATTRIBUTION_VERBS) + ")"
 _ATTRIBUTION = re.compile(r"^" + _VERB_GROUP + r"\b")
 # Linia zawierająca gdziekolwiek "- mówi …" to wypowiedź z przypisaniem (także od małej litery).
 _HAS_ATTRIBUTION = re.compile(r"\s[-–—]\s+" + _VERB_GROUP + r"\b")
-# Przypisanie samym nazwiskiem i krótką funkcją na końcu linii: "- Cytat - Jan Kowalski, ekonomista."
-# Funkcja bez przecinka i najwyżej 6 słów – inaczej ("Jan Nowak, premier, ukradł…") to dalszy ciąg cytatu.
-_NAME_ATTRIBUTION = re.compile(
-    r"^[A-ZĄĆĘŁŃÓŚŹŻ][\w-]+(?: [A-ZĄĆĘŁŃÓŚŹŻ][\w-]+)+, (?:[^\s,.!?]+ ?){1,6}[.!?]?$"
-)
 # Skrót cytatu wielokropkiem jest dozwolony, ale z samych pojedynczych słów
 # dałoby się skleić zdanie o odwrotnym sensie.
 _MIN_FRAGMENT_WORDS = 3
@@ -223,12 +218,6 @@ def _windows(transcript: Transcript) -> list[str]:
     return transcript._windows
 
 
-def _speaker_agrees(declared: str | None, segment: str | None) -> bool:
-    """Mówca z listy cytatów zgadza się z segmentem. Segment bez mówcy niczego nie wyklucza
-    (te słowa mógł powiedzieć ktokolwiek), więc pasuje do każdej deklaracji."""
-    return segment is None or _same_speaker(declared, segment)
-
-
 def _same_speaker(a: str | None, b: str | None) -> bool:
     return a is not None and b is not None and normalize(a) == normalize(b)
 
@@ -296,41 +285,57 @@ def find_quotes(text: str, transcript: Transcript) -> list[int]:
     return [i for i, window in enumerate(_windows(transcript)) if _matches(options, window)]
 
 
-def dash_quotes(paragraph: str) -> list[str]:
+def _speaker_names(labels) -> list[str]:
+    """Imiona i nazwiska z etykiet mówców ("Jan Kowalski, rolnik" → "Jan Kowalski")."""
+    names = {label.split(",")[0].strip() for label in labels if label}
+    return sorted((n for n in names if len(n.split()) >= 2), key=len, reverse=True)
+
+
+def _is_attribution(part: str, names: list[str]) -> bool:
+    if _ATTRIBUTION.match(part):
+        return True
+    # "- Cytat - Jan Kowalski, ekonomista." – tylko dla znanych mówców; dowolne "Imię Nazwisko,"
+    # pozwalałoby ukryć ciąg dalszy cytatu ("- … - Panie Premierze, oddaj nam…").
+    return any(part.startswith(name) and part[len(name) : len(name) + 1] in ("", ",", ".") for name in names)
+
+
+def dash_quotes(paragraph: str, speakers=()) -> list[str]:
     """Wypowiedzi z akapitu dialogowego "- cytat - mówi X. - Dalszy cytat."
 
-    Każda linia akapitu zaczynająca się od myślnika to wypowiedź. Fragment po
-    myślniku jest przypisaniem tylko wtedy, gdy zaczyna się czasownikiem mówienia;
-    inaczej (np. "5 - 10 procent", "- a potem…") należy do cytatu i jest sprawdzany.
-    Po przypisaniu i zakończonym zdaniu narracji kolejny fragment to nowa wypowiedź.
+    Linie zaczynające się od myślnika dzielimy na fragmenty po myślnikach.
+    Fragment jest przypisaniem tylko wtedy, gdy zaczyna się czasownikiem mówienia
+    albo nazwiskiem znanego mówcy (`speakers`). Każdy inny fragment jest wypowiedzią:
+    przed przypisaniem – ciągiem dalszym cytatu ("5 - 10 procent"), po przypisaniu –
+    kolejnym cytatem ("- A - mówi X i dodaje: - B"). Przy niejasności fragment trafia
+    do sprawdzenia, a nie do narracji.
     """
+    names = _speaker_names(speakers)
     quotes: list[str] = []
     for number, line in enumerate(paragraph.splitlines()):
         if not _DASH_LINE.match(line):
             continue
         content = _DASH_LINE.sub("", line, count=1)
-        if number > 0 and not (_SENTENCE_START.match(content) or _HAS_ATTRIBUTION.search(content)):
-            continue
         parts = _DASH_SPLIT.split(content)
+        attributed = any(_is_attribution(part, names) for part in parts[1:])
+        # Dalsze linie akapitu od małej litery bez przypisania to zwykle lista, nie wypowiedź.
+        if number > 0 and not (_SENTENCE_START.match(content) or attributed):
+            continue
         current: str | None = parts[0]
-        narration = ""
         for part in parts[1:]:
-            if current is not None:
-                if _ATTRIBUTION.match(part) or _NAME_ATTRIBUTION.match(part):
+            if _is_attribution(part, names):
+                if current is not None:
                     quotes.append(current)
-                    current, narration = None, part
-                else:
-                    current = f"{current} - {part}"
-            elif narration.rstrip().endswith((".", "!", "?", "…")):
-                current = part
+                current = None
+            elif current is not None:
+                current = f"{current} - {part}"
             else:
-                narration = part
+                current = part
         if current is not None:
             quotes.append(current)
     return [q.strip() for q in quotes if q.strip()]
 
 
-def extract_inline_quotes(draft: ArticleDraft) -> list[tuple[str, str]]:
+def extract_inline_quotes(draft: ArticleDraft, speakers=()) -> list[tuple[str, str]]:
     """Pary (miejsce, cytat) dla wypowiedzi w cudzysłowie lub po myślniku w tekście draftu."""
     places = [(f"tytuł {i}", t) for i, t in enumerate(draft.title_options, start=1)]
     places.append(("lead", draft.lead))
@@ -344,7 +349,7 @@ def extract_inline_quotes(draft: ArticleDraft) -> list[tuple[str, str]]:
             quoted = next(g for g in match.groups() if g is not None).strip()
             if len(normalize(quoted).split()) >= _MIN_INLINE_QUOTE_WORDS:
                 found.append((location, quoted))
-        for quoted in dash_quotes(text):
+        for quoted in dash_quotes(text, [*speakers, *(q.speaker for q in draft.quotes)]):
             # Akapit z myślnikiem to zawsze wypowiedź (nie nazwa własna), więc sprawdzamy
             # też najkrótsze; może zawierać wtrącenia w cudzysłowie – sprawdzamy całość.
             if normalize(quoted):
@@ -355,7 +360,8 @@ def extract_inline_quotes(draft: ArticleDraft) -> list[tuple[str, str]]:
 def check_inline_quotes(draft: ArticleDraft, transcript: Transcript) -> list[InlineQuoteCheck]:
     declared = [(normalize(q.text), q) for q in draft.quotes]
     checks = []
-    for location, text in extract_inline_quotes(draft):
+    speakers = {segment.speaker for segment in transcript.segments if segment.speaker}
+    for location, text in extract_inline_quotes(draft, speakers):
         matches = find_quotes(text, transcript)
         options, _ = _fragment_options(text)
         normalized = normalize(text)
@@ -365,8 +371,10 @@ def check_inline_quotes(draft: ArticleDraft, transcript: Transcript) -> list[Inl
         if labelled:
             # Te same słowa mogą paść kilka razy (np. prowadzący powtarza słowa gościa):
             # wystarczy, że deklarowany mówca jest jednym z mówiących je w nagraniu.
+            # Jeśli te słowa mówi w nagraniu ktoś rozpoznany, deklarowany mówca musi być jednym
+            # z nich; segment bez mówcy nie może "uzasadnić" dowolnego przypisania.
             agreed = [
-                i for i in matches if any(_speaker_agrees(q.speaker, transcript.segments[i].speaker) for q in candidates)
+                i for i in labelled if any(_same_speaker(q.speaker, transcript.segments[i].speaker) for q in candidates)
             ]
             is_declared = bool(agreed)
             # W ostrzeżeniu podajemy rozpoznanego mówcę – "None" nie dałoby się zadeklarować.
