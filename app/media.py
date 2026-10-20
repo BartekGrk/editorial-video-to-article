@@ -11,6 +11,7 @@ działa bez nich, dopóki nikt nie uruchomi przetwarzania nagrania.
 """
 
 import ipaddress
+import logging
 import os
 import re
 import shutil
@@ -23,6 +24,8 @@ from typing import Protocol
 from urllib.parse import urlparse
 
 from app.models import TranscriptSegment
+
+log = logging.getLogger(__name__)
 
 
 class MediaError(RuntimeError):
@@ -171,34 +174,62 @@ def read_wav(path: Path):
     return np.frombuffer(data, dtype=np.int16).astype(np.float32) / 32768.0
 
 
+def _cuda_devices() -> int:
+    try:
+        import ctranslate2
+
+        return ctranslate2.get_cuda_device_count()
+    except Exception:  # pragma: no cover - brak ctranslate2 lub sterownika
+        return 0
+
+
 class Transcriber(Protocol):
     def transcribe(self, audio: Path) -> list[AsrSegment]: ...
 
 
 class WhisperTranscriber:
-    """faster-whisper na CPU. Model wybierany zmienną EDITORIAL_ASR_MODEL (domyślnie `medium`).
+    """faster-whisper. Model: EDITORIAL_ASR_MODEL (domyślnie `medium`), urządzenie:
+    EDITORIAL_ASR_DEVICE = auto (GPU NVIDIA, jeśli jest) | cuda | cpu.
 
-    Pomiar na 4 rdzeniach (nagranie 4,4 min): `small` 1,5 min, `medium` 3,8 min.
+    Pomiar na 4 rdzeniach CPU (nagranie 4,4 min): `small` 1,5 min, `medium` 3,8 min.
     `medium` popełnia wyraźnie mniej błędów w liczbach i odmianie, a w procesie
     bez człowieka każdy błąd ASR może trafić do cytatu – stąd taki domyślny wybór.
+    Z kartą graficzną warto użyć `large-v3`.
     """
 
     _models: dict[str, object] = {}
     _lock = threading.Lock()
 
-    def __init__(self, model_size: str | None = None, language: str = "pl"):
+    def __init__(self, model_size: str | None = None, language: str = "pl", device: str | None = None):
         self.model_size = model_size or os.environ.get("EDITORIAL_ASR_MODEL", "medium")
+        self.device = (device or os.environ.get("EDITORIAL_ASR_DEVICE", "auto")).lower()
         self.language = language
 
     def _model(self):
         with self._lock:
-            if self.model_size not in self._models:
+            key = (self.model_size, self.device)
+            if key not in self._models:
                 try:
                     from faster_whisper import WhisperModel
                 except ImportError as error:  # pragma: no cover - zależność opcjonalna
                     raise MediaError("Transkrypcja wymaga pakietu faster-whisper") from error
-                self._models[self.model_size] = WhisperModel(self.model_size, device="cpu", compute_type="int8")
-            return self._models[self.model_size]
+                self._models[key] = self._load(WhisperModel)
+            return self._models[key]
+
+    def _load(self, whisper_model):  # pragma: no cover - zależy od sprzętu
+        if self.device in ("auto", "cuda") and _cuda_devices() > 0:
+            try:
+                model = whisper_model(self.model_size, device="cuda", compute_type="float16")
+                log.info("ASR: model %s na GPU (cuda)", self.model_size)
+                return model
+            except Exception as error:  # np. brak bibliotek CUDA albo nieobsługiwana karta
+                if self.device == "cuda":
+                    raise MediaError(f"Nie udało się uruchomić transkrypcji na GPU: {error}") from error
+                log.warning("ASR: GPU niedostępne (%s) – transkrypcja na CPU", error)
+        elif self.device == "cuda":
+            raise MediaError("EDITORIAL_ASR_DEVICE=cuda, ale nie wykryto karty NVIDIA")
+        log.info("ASR: model %s na CPU", self.model_size)
+        return whisper_model(self.model_size, device="cpu", compute_type="int8")
 
     def transcribe(self, audio: Path) -> list[AsrSegment]:
         segments, _info = self._model().transcribe(

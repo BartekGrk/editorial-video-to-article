@@ -9,6 +9,7 @@ W obu przypadkach eksport do CMS (Markdown/HTML) jest możliwy tylko dla
 draftu bez błędów weryfikacji.
 """
 
+import logging
 import os
 import shutil
 from importlib.util import find_spec
@@ -711,4 +712,6 @@ def create_app(
     return app
 
 
+# Komunikaty aplikacji (np. czy transkrypcja działa na GPU) widoczne w logach serwera.
+logging.basicConfig(level=os.environ.get("EDITORIAL_LOG_LEVEL", "INFO"), format="%(levelname)s %(name)s: %(message)s")
 app = create_app()

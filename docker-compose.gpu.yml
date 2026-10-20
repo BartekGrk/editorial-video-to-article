@@ -1,0 +1,10 @@
+# Dodatek udostępniający kartę NVIDIA kontenerowi (Docker Desktop + WSL2 lub NVIDIA Container Toolkit).
+services:
+  app:
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]

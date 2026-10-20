@@ -17,6 +17,8 @@ pip install -r requirements.txt
 uvicorn app.main:app                 # http://127.0.0.1:8000
 ```
 
+**Docker (zalecane na własny komputer/serwer):** `cp .env.example .env`, potem `docker compose up -d --build` (z kartą NVIDIA: `docker compose -f docker-compose.yml -f docker-compose.gpu.yml up -d --build`). Pełna instrukcja dla domowego komputera z Windows, z dostępem przez Tailscale: [docs/INSTALACJA-WINDOWS.md](docs/INSTALACJA-WINDOWS.md).
+
 Bez klucza API aplikacja działa w **trybie demonstracyjnym**: draft powstaje regułowo z dosłownych wypowiedzi, bez AI. Aby drafty pisał Claude:
 
 ```bash
@@ -28,7 +30,8 @@ uvicorn app.main:app
 | --- | --- | --- |
 | `EDITORIAL_ENGINE` | `anthropic`, jeśli jest klucz, w przeciwnym razie `heuristic` | silnik generowania |
 | `EDITORIAL_MODEL` | `claude-opus-5-5` | model Claude |
-| `EDITORIAL_ASR_MODEL` | `medium` | model faster-whisper (`small` jest 2,5× szybszy, ale popełnia więcej błędów) |
+| `EDITORIAL_ASR_MODEL` | `medium` | model faster-whisper (`small` jest 2,5× szybszy, ale popełnia więcej błędów; z kartą graficzną `large-v3`) |
+| `EDITORIAL_ASR_DEVICE` | `auto` | `auto` – karta NVIDIA, jeśli działa, inaczej CPU; `cuda`; `cpu` |
 | `EDITORIAL_DB` | `data/editorial.db` | baza SQLite |
 | `EDITORIAL_MEDIA_DIR` | `data/media` | przesłane i pobrane nagrania |
 | `EDITORIAL_MAX_UPLOAD_MB` | `2048` | limit rozmiaru pliku |

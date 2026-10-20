@@ -1,0 +1,14 @@
+# Uruchomienie: docker compose up -d --build
+# Z kartą NVIDIA:  docker compose -f docker-compose.yml -f docker-compose.gpu.yml up -d --build
+services:
+  app:
+    build: .
+    image: editorial-video-to-article
+    env_file: .env
+    # Tylko z tego komputera; z innych urządzeń przez Tailscale (tailscale serve) – zob. docs/INSTALACJA-WINDOWS.md
+    ports:
+      - "127.0.0.1:8000:8000"
+    volumes:
+      - ./data:/app/data        # baza i nagrania – przetrwają aktualizację obrazu
+      - ./models:/app/models    # pobrane modele Whisper (ok. 3 GB dla large-v3)
+    restart: unless-stopped
