@@ -267,13 +267,15 @@ def create_app(
         """Profil dla draftu.
 
         `explicit`: wybór redaktora w tym żądaniu – "" oznacza świadomie "bez profilu",
-        None – brak wyboru. Wtedy profil materiału (jeśli nadal istnieje), a w ostateczności
+        None – brak wyboru. Ta sama konwencja dotyczy profilu zapisanego w materiale. Wtedy profil materiału (jeśli nadal istnieje), a w ostateczności
         wbudowany profil WP Finanse. Usunięty profil (np. zapamiętany do ponowienia) nie blokuje pracy.
         """
         if explicit == "":
             return None
         if explicit and store.get(StyleProfileRecord, explicit):
             return explicit
+        if material_profile == "":
+            return None
         if material_profile and store.get(StyleProfileRecord, material_profile):
             return material_profile
         return DEFAULT_STYLE_ID if store.get(StyleProfileRecord, DEFAULT_STYLE_ID) else None
@@ -302,7 +304,8 @@ def create_app(
                 status=MaterialStatus.PROCESSING,
                 job_stage=auto.Stage.QUEUED.value,
                 job_error=None,
-                style_profile_id=profile_id,
+                # "" zapamiętuje świadomy brak profilu (None oznacza profil domyślny).
+                style_profile_id=profile_id or "",
                 auto_settings=options.model_copy(update={"style_profile_id": profile_id or ""}),
             )
         except ConditionFailed as error:
@@ -444,7 +447,7 @@ def create_app(
                 "mode": options.mode,
                 "draft": result.draft,
                 "report": result.report,
-                "style_profile_id": profile_id,
+                "style_profile_id": profile_id or "",
                 "status": MaterialStatus.DRAFTED,
             },
         )
@@ -601,7 +604,8 @@ def create_app(
         if material.status != MaterialStatus.FAILED:
             raise HTTPException(status_code=409, detail="Ponowić można tylko automat zakończony błędem")
         _ensure_consent(request.app.state.engine, material)
-        options = material.auto_settings or AutoRunOptions()
+        # Profil bierzemy z materiału: redaktor mógł go zmienić w ustawieniach po błędzie.
+        options = (material.auto_settings or AutoRunOptions()).model_copy(update={"style_profile_id": None})
         if material.transcript_raw.strip():
             return _view(start_auto_job(request, material, options))
         media = request.app.state.media_dir / material.media_file if material.media_file else None

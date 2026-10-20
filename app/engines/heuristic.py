@@ -41,12 +41,22 @@ _DEMO_NOTE = "Draft z trybu demonstracyjnego (bez AI): szablon z dosłownych wyp
 
 _MAX_TITLE_QUOTE_WORDS = 8
 _MAX_TITLE_WORDS = 14
+# Temat w tytule – zostawia miejsce na dopisek lub krótki cytat w granicach 14 słów.
+_MAX_SUBJECT_WORDS = 8
 _SHORT_MAX_WORDS = 90
 _MAX_THREADS = 4
 
 
 def _subject(material: MaterialInput) -> str:
-    return (material.title or material.topic or "Materiał wideo").rstrip(" .?!:")
+    # Automat zapisuje pierwszą propozycję tytułu jako tytuł materiału; temat to część przed
+    # ". " lub cytatem – inaczej każde kolejne generowanie dokładałoby cytat do tytułu.
+    title = re.split(r"\.\s|„", material.title or "")[0]
+    return _clip((title or material.topic or "Materiał wideo").strip().rstrip(" .?!:,;–-"))
+
+
+def _clip(text: str, words: int = _MAX_SUBJECT_WORDS) -> str:
+    parts = text.split()
+    return " ".join(parts[:words]) if len(parts) > words else text
 
 
 def _who(quote: Quote, capital: bool = False) -> str:
@@ -212,7 +222,7 @@ class HeuristicEngine:
         title_quote = next((q for q in short_quotes if word_count(subject) + word_count(q.text) <= _MAX_TITLE_WORDS), None)
         if title_quote:
             titles.append(f"{subject}. „{title_quote.text}”")
-        topic = (material.topic or subject).strip()
+        topic = _clip((material.topic or subject).strip().rstrip(" .?!:,;–-"))
         titles.append(f"{topic[:1].upper() + topic[1:]}. Co mówią rozmówcy w nagraniu")
         if word_count(subject) >= 4:
             titles.append(subject)
@@ -240,7 +250,9 @@ class HeuristicEngine:
                 # Wątek mówcy ma jego nazwę; w pozostałych śródtytuł z pierwszego cytatu tej sekcji
                 # (pierwszy cytat wątku mógł już trafić do leadu).
                 named = any(q.speaker == thread.name for q in thread_quotes)
-                heading = thread.name if named else _heading(thread_quotes[0].text)
+                # Krótki cytat w śródtytule powtórzyłby akapit pod nim – wtedy sekcja bez śródtytułu.
+                longer = next((q for q in thread_quotes if word_count(q.text) > 8), None)
+                heading = thread.name if named else (_heading(longer.text) if longer else None)
                 sections.append(
                     Section(heading=heading, paragraphs=[f"- {q.text} - {_attribution(q)}." for q in thread_quotes])
                 )

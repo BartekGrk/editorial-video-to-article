@@ -5,6 +5,9 @@
 const view = document.getElementById("view");
 const state = { config: null, material: null, profiles: [], tab: "draft" };
 
+const DEFAULT_PROFILE = "wp-finanse";
+const NO_PROFILE = "__none__";  // wartość pola formularza; w API "" = świadomie bez profilu
+
 const STATUS = {
   PROCESSING: ["Przetwarzanie…", "warn"],
   FAILED: ["Błąd", "err"],
@@ -280,7 +283,9 @@ async function renderForm(id) {
       <label for="angle">Kąt redakcyjny (opcjonalnie)</label>
       <input type="text" id="angle" value="${esc(m.angle)}" placeholder="np. koszty dla gospodarstw domowych">
       <label for="style">Profil stylu</label>
-      <select id="style"><option value="">${profiles.some((p) => p.id === DEFAULT_PROFILE) ? "— domyślny (WP Finanse) —" : "— bez profilu —"}</option>
+      <select id="style">
+        ${profiles.some((p) => p.id === DEFAULT_PROFILE) ? '<option value="">— domyślny (WP Finanse) —</option>' : ""}
+        <option value="${NO_PROFILE}" ${m.style_profile_id === "" ? "selected" : ""}>— bez profilu —</option>
         ${profiles.filter((p) => p.id !== DEFAULT_PROFILE).map((p) => `<option value="${esc(p.id)}" ${p.id === m.style_profile_id ? "selected" : ""}>${esc(p.name)}</option>`).join("")}
       </select>
       <label for="transcript">Transkrypcja</label>
@@ -312,7 +317,8 @@ async function renderForm(id) {
       transcript_raw: form.querySelector("#transcript").value,
       transcript_has_speakers: form.querySelector("#has-speakers").checked,
       external_processing_allowed: form.querySelector("#consent").checked,
-      style_profile_id: form.querySelector("#style").value || null,
+      // null = profil domyślny, "" = świadomie bez profilu.
+      style_profile_id: form.querySelector("#style").value === NO_PROFILE ? "" : form.querySelector("#style").value || null,
     };
     busy(event.submitter, "Zapisywanie…", async () => {
       const saved = await api(id ? `/api/materials/${id}` : "/api/materials", { method: id ? "PUT" : "POST", body });
@@ -522,13 +528,11 @@ function analyze(button) {
 
 // --- zakładka: draft ---------------------------------------------------------
 
-const DEFAULT_PROFILE = "wp-finanse";
-
-// Profil, którego użyje serwer: zapisany w materiale, a przed pierwszym draftem – domyślny.
-// Po drafcie brak profilu oznacza świadomy wybór "bez profilu".
+// Profil, którego użyje serwer: zapisany w materiale; null oznacza domyślny, "" – świadomie bez profilu.
 function effectiveProfile(m) {
   if (m.style_profile_id) return m.style_profile_id;
-  return m.draft || !state.profiles?.some((p) => p.id === DEFAULT_PROFILE) ? "" : DEFAULT_PROFILE;
+  if (m.style_profile_id === "") return "";
+  return state.profiles?.some((p) => p.id === DEFAULT_PROFILE) ? DEFAULT_PROFILE : "";
 }
 
 function generatorCard(m) {

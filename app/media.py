@@ -44,13 +44,22 @@ class FetchedMedia:
     public_url: str | None = None
 
 
-# Fragmenty nazw plików, które nic nie mówią o treści (aparat, wersja, rozszerzenie).
-_FILENAME_NOISE = re.compile(r"\d+|v\d+|img|vid|mov|mvi|dsc[nf]?|pxl|gopr\d*|final|copy|kopia|edit|mp4|m4a", re.I)
+# Szum w nazwach plików: prefiks aparatu z numerami na początku, wersja lub kopia na końcu.
+# Liczby w środku i na końcu nazwy zostają ("800-plus", "budzet-2025").
+_CAMERA_PREFIX = re.compile(r"img|vid|mov|mvi|dsc[nf]?|pxl|gopr\d*|screen ?recording", re.I)
+_TRAILING_NOISE = re.compile(r"final|v\d+|copy|kopia|edit|\(\d+\)|\d{6,}", re.I)
 
 
 def title_from_filename(name: str) -> str:
     """Tytuł roboczy z nazwy pliku: "IMG_0412_sonda-kaucja_FINAL.mp4" → "Sonda kaucja"."""
-    words = [w for w in re.split(r"[\s_\-.]+", Path(name).stem) if w and not _FILENAME_NOISE.fullmatch(w)]
+    stem = re.sub(r"\(\d+\)$", "", Path(name).stem)
+    words = [w for w in re.split(r"[\s_\-.]+", stem) if w]
+    if words and _CAMERA_PREFIX.fullmatch(words[0]):
+        words.pop(0)
+        while words and words[0].isdigit():
+            words.pop(0)
+    while words and _TRAILING_NOISE.fullmatch(words[-1]):
+        words.pop()
     if not words:
         return "Nagranie"
     text = " ".join(words)

@@ -70,6 +70,7 @@ class Material(BaseModel):
     # Zgoda na wysłanie treści do zewnętrznego API: materiał publiczny,
     # syntetyczny albo dopuszczony polityką redakcji.
     external_processing_allowed: bool = False
+    # None – profil domyślny (WP Finanse), "" – świadomie bez profilu.
     style_profile_id: str | None = None
     status: MaterialStatus = MaterialStatus.NEW
     evidence: EvidencePack | None = None

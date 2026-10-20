@@ -12,8 +12,8 @@ from app.engines import HeuristicEngine
 from app.jobs import InlineRunner
 from app.main import create_app
 from app.media import AsrSegment, merge_asr_segments
-from app.models import SpeakerLabel, SpeakerLabels, TranscriptSegment
-from app.store import Material, MaterialStatus, Store
+from app.models import ArticleDraft, SpeakerLabel, SpeakerLabels, TranscriptSegment
+from app.store import AutoSettings, Material, MaterialStatus, Store
 
 needs_ffmpeg = pytest.mark.skipif(shutil.which("ffmpeg") is None, reason="wymaga ffmpeg")
 
@@ -299,7 +299,29 @@ def test_deleted_style_profile_does_not_block_and_empty_means_none(client, raw_t
     drafted = client.post(f"/api/materials/{mid}/draft", json={"mode": "SHORT"}).json()["material"]
     assert drafted["style_profile_id"] == "wp-finanse"
     drafted = client.post(f"/api/materials/{mid}/draft", json={"mode": "SHORT", "style_profile_id": ""}).json()["material"]
-    assert drafted["style_profile_id"] is None
+    assert drafted["style_profile_id"] == ""
+    # Świadomy brak profilu zostaje przy automacie bez wskazania profilu.
+    client.post(f"/api/materials/{mid}/auto", json={})
+    assert client.get(f"/api/materials/{mid}").json()["style_profile_id"] == ""
+
+
+def test_retry_uses_profile_chosen_after_failure(raw_transcript):
+    store = Store(":memory:")
+    client = TestClient(create_app(store, HeuristicEngine(), FakeTranscriber(), InlineRunner()))
+    first = client.post("/api/style-profiles", json={"name": "P1", "articles": ["T\n\nLead.\n\nAkapit."]}).json()["id"]
+    second = client.post("/api/style-profiles", json={"name": "P2", "articles": ["T\n\nLead.\n\nAkapit."]}).json()["id"]
+    material = Material(
+        title="x",
+        transcript_raw=raw_transcript,
+        status=MaterialStatus.FAILED,
+        style_profile_id=second,
+        auto_settings=AutoSettings(style_profile_id=first, auto_approve=False),
+    )
+    store.save(material)
+    assert client.post(f"/api/materials/{material.id}/retry").status_code == 202
+    after = client.get(f"/api/materials/{material.id}").json()
+    assert after["style_profile_id"] == second
+    assert after["status"] == "DRAFTED"
 
 
 def test_approve_blocked_while_processing(raw_transcript):
@@ -365,3 +387,26 @@ def test_title_from_filename_drops_camera_noise():
     assert title_from_filename("IMG_2024_0412_sonda-kaucja_FINAL.wav") == "Sonda kaucja"
     assert title_from_filename("wywiad-budzet-domowy.m4a") == "Wywiad budzet domowy"
     assert title_from_filename("VID_0001.mp4") == "Nagranie"
+    assert title_from_filename("800-plus.mp4") == "800 plus"
+    assert title_from_filename("budzet-2025.mp4") == "Budzet 2025"
+    assert title_from_filename("wywiad(1).mp4") == "Wywiad"
+
+
+def test_demo_titles_stay_stable_and_within_wp_length(raw_transcript):
+    """Tytuł zapisany przez automat nie może narastać przy kolejnych uruchomieniach."""
+    from app.format_check import format_warnings
+
+    store = Store(":memory:")
+    client = TestClient(create_app(store, HeuristicEngine(), FakeTranscriber(), InlineRunner()))
+    long_topic = "Jak zaplanować domowy budżet na nowy rok i nie zbankrutować przed wakacjami?"
+    material = Material(title="Sonda kaucja", title_auto=True, topic=long_topic, transcript_raw=raw_transcript)
+    store.save(material)
+    titles = []
+    for _ in range(3):
+        client.post(f"/api/materials/{material.id}/auto", json={})
+        current = client.get(f"/api/materials/{material.id}").json()
+        titles.append(current["title"])
+        draft = ArticleDraft.model_validate(current["draft"])
+        assert not [w for w in format_warnings(draft) if w.startswith("Tytuł")]
+        assert not any("?." in t or ".." in t for t in draft.title_options)
+    assert len(set(titles)) == 1
