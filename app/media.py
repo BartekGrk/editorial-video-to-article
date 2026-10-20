@@ -12,6 +12,7 @@ działa bez nich, dopóki nikt nie uruchomi przetwarzania nagrania.
 
 import ipaddress
 import os
+import re
 import shutil
 import socket
 import subprocess
@@ -41,6 +42,19 @@ class FetchedMedia:
     title: str | None = None
     # Link do odtwarzania w interfejsie (np. YouTube); None dla przesłanych plików.
     public_url: str | None = None
+
+
+# Fragmenty nazw plików, które nic nie mówią o treści (aparat, wersja, rozszerzenie).
+_FILENAME_NOISE = re.compile(r"\d+|v\d+|img|vid|mov|mvi|dsc[nf]?|pxl|gopr\d*|final|copy|kopia|edit|mp4|m4a", re.I)
+
+
+def title_from_filename(name: str) -> str:
+    """Tytuł roboczy z nazwy pliku: "IMG_0412_sonda-kaucja_FINAL.mp4" → "Sonda kaucja"."""
+    words = [w for w in re.split(r"[\s_\-.]+", Path(name).stem) if w and not _FILENAME_NOISE.fullmatch(w)]
+    if not words:
+        return "Nagranie"
+    text = " ".join(words)
+    return text[:1].upper() + text[1:]
 
 
 def is_url(source: str) -> bool:
@@ -76,7 +90,7 @@ def fetch_media(source: str, workdir: Path) -> FetchedMedia:
         path = Path(source)
         if not path.is_file():
             raise MediaError(f"Nie ma pliku: {source}")
-        return FetchedMedia(path=path, title=path.stem.replace("_", " "))
+        return FetchedMedia(path=path, title=title_from_filename(path.name))
 
     ensure_public_host(source)
     try:

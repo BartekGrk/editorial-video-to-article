@@ -112,6 +112,7 @@ def test_auto_from_uploaded_file_end_to_end(auto_client):
     assert material["draft"]["mode"] == material["evidence"]["suggested_mode"]
     # Tytuł roboczy z nazwy pliku zastąpiony propozycją z draftu.
     assert material["title"] == material["draft"]["title_options"][0]
+    assert "_" not in material["title"]
     assert client.get(f"/media/{material['id']}").content == _wav_bytes()
     assert client.get(f"/api/materials/{material['id']}/export?format=html").status_code == 200
 
@@ -356,3 +357,11 @@ def test_concurrent_auto_start_is_rejected(auto_client, raw_transcript):
 
     with pytest.raises(ConditionFailed):
         store.update(Material, material.id, condition=lambda m: m.status != MaterialStatus.PROCESSING, job_stage="QUEUED")
+
+
+def test_title_from_filename_drops_camera_noise():
+    from app.media import title_from_filename
+
+    assert title_from_filename("IMG_2024_0412_sonda-kaucja_FINAL.wav") == "Sonda kaucja"
+    assert title_from_filename("wywiad-budzet-domowy.m4a") == "Wywiad budzet domowy"
+    assert title_from_filename("VID_0001.mp4") == "Nagranie"

@@ -40,6 +40,7 @@ _DEMO_NOTE = "Draft z trybu demonstracyjnego (bez AI): szablon z dosłownych wyp
 
 
 _MAX_TITLE_QUOTE_WORDS = 8
+_MAX_TITLE_WORDS = 14
 _SHORT_MAX_WORDS = 90
 _MAX_THREADS = 4
 
@@ -86,10 +87,14 @@ def _threads(guests: list[TranscriptSegment], quotes: list[Quote]) -> list[Threa
         first = next((q for q in quotes if q.timecode_seconds in times), None)
         if first is None:
             continue
-        # Śródtytuł z pierwszych słów wypowiedzi – szablon do zmiany przez redaktora.
-        heading = name or " ".join(first.text.split()[:6]).rstrip(",;:") + "…"
+        heading = name or _heading(first.text)
         threads.append(Thread(name=heading, summary=first.text, timecodes=times))
     return threads
+
+
+def _heading(text: str) -> str:
+    # Śródtytuł z pierwszych słów wypowiedzi – szablon do zmiany przez redaktora.
+    return " ".join(text.split()[:6]).rstrip(",;:") + "…"
 
 
 def _is_host(segment: TranscriptSegment) -> bool:
@@ -202,13 +207,18 @@ class HeuristicEngine:
         subject = _subject(material)
 
         short_quotes = [q for q in quotes if word_count(q.text) <= _MAX_TITLE_QUOTE_WORDS]
-        titles = [subject]
-        if short_quotes:
-            titles.append(f"{subject}. „{short_quotes[0].text}”")
-        titles.append(f"{material.topic or subject}: wideo")
+        # Tytuły w typowej długości WP (4–14 słów): z cytatem, z tematem, sam temat tylko gdy dość długi.
+        titles = []
+        title_quote = next((q for q in short_quotes if word_count(subject) + word_count(q.text) <= _MAX_TITLE_WORDS), None)
+        if title_quote:
+            titles.append(f"{subject}. „{title_quote.text}”")
+        topic = (material.topic or subject).strip()
+        titles.append(f"{topic[:1].upper() + topic[1:]}. Co mówią rozmówcy w nagraniu")
+        if word_count(subject) >= 4:
+            titles.append(subject)
         titles = list(dict.fromkeys(titles))
         if len(titles) < 2:
-            titles.append(f"{subject} – relacja wideo")
+            titles.append(f"{subject}. Najważniejsze wypowiedzi z nagrania")
 
         lead = f"{subject} – materiał wideo."
         if quotes:
@@ -227,13 +237,17 @@ class HeuristicEngine:
                 if not thread_quotes:
                     continue
                 used += thread_quotes
+                # Wątek mówcy ma jego nazwę; w pozostałych śródtytuł z pierwszego cytatu tej sekcji
+                # (pierwszy cytat wątku mógł już trafić do leadu).
+                named = any(q.speaker == thread.name for q in thread_quotes)
+                heading = thread.name if named else _heading(thread_quotes[0].text)
                 sections.append(
-                    Section(heading=thread.name, paragraphs=[f"- {q.text} - {_attribution(q)}." for q in thread_quotes])
+                    Section(heading=heading, paragraphs=[f"- {q.text} - {_attribution(q)}." for q in thread_quotes])
                 )
 
         # Cytat z tytułu też musi być na liście cytatów (z mówcą), inaczej automat go nie zatwierdzi.
-        if short_quotes and short_quotes[0] not in used:
-            used.append(short_quotes[0])
+        if title_quote and title_quote not in used:
+            used.append(title_quote)
         return ArticleDraft(
             mode=request.mode,
             title_options=titles[:3],

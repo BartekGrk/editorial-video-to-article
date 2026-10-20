@@ -32,3 +32,35 @@ def test_word_error_rate():
     assert word_error_rate("Ala ma kota.", "ala ma kota") == 0
     assert word_error_rate("ala ma kota", "ala ma psa") == 1 / 3
     assert word_error_rate("ala ma kota", "ala kota") == 1 / 3
+
+
+def test_demo_drafts_fit_wp_title_format_and_headings():
+    """Tryb demonstracyjny nie może łamać własnych reguł formatu ani dawać śródtytułu spoza sekcji."""
+    import json
+
+    from app import pipeline
+    from app.engines import DraftRequest, MaterialInput
+    from app.evaluation import default_style
+    from app.media import title_from_filename
+    from app.transcript import parse_transcript
+    from app.verification import normalize
+
+    engine = HeuristicEngine()
+    for path in sorted(EXAMPLES.glob("*.txt")):
+        meta = json.loads(path.with_suffix(".json").read_text(encoding="utf-8"))
+        material = MaterialInput(
+            title=title_from_filename(path.name),
+            transcript=parse_transcript(path.read_text(encoding="utf-8")),
+            topic=meta.get("topic", ""),
+        )
+        evidence = pipeline.analyze(engine, material)
+        request = DraftRequest(material=material, evidence=evidence, mode=evidence.suggested_mode, style=default_style())
+        result = pipeline.write(engine, request)
+        draft = result.draft
+        assert result.report.strict_ok
+        assert not [w for w in result.report.format_warnings if w.startswith("Tytuł")], result.report.format_warnings
+        assert all(t[:1].isupper() for t in draft.title_options)
+        for section in draft.sections:
+            if section.heading and section.heading.endswith("…"):
+                body = normalize(" ".join(section.paragraphs))
+                assert normalize(section.heading.rstrip("…")) in body, section.heading

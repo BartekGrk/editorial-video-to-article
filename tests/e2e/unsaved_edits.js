@@ -21,6 +21,19 @@ const SHOTS = process.argv[2] || '.';
   await page.waitForTimeout(500);
   const toast = await page.textContent('#toast');
   if (!toast.includes('niezapisane zmiany')) errors.push('zatwierdzenie bez zapisu nie zostało zablokowane: ' + toast);
+  // Ponowna analiza nie zmienia draftu, więc niezapisane edycje zostają.
+  await page.click('[data-tab=evidence]');
+  await page.click('#analyze');
+  await page.waitForTimeout(800);
+  await page.click('[data-tab=draft]');
+  if (!(await page.inputValue('#lead')).endsWith('EDYCJA')) errors.push('edycja zgubiona po ponownej analizie');
+  // Lista tytułów w eksporcie odpowiada zapisanej wersji, którą eksport faktycznie zwraca.
+  await page.fill('.title-input', 'NIEZAPISANY TYTUŁ');
+  await page.click('[data-tab=export]');
+  await page.waitForSelector('#ttl');
+  if ((await page.$eval('#ttl', (s) => s.options[0].text)) === 'NIEZAPISANY TYTUŁ') {
+    errors.push('eksport proponuje niezapisany tytuł');
+  }
   await page.screenshot({ path: SHOTS + '/unsaved.png' });
   console.log('ERRORS:', JSON.stringify(errors));
   await browser.close();

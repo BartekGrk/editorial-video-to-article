@@ -21,7 +21,7 @@ from pydantic import BaseModel, Field
 
 from app import auto, pipeline
 from app.jobs import ThreadRunner
-from app.media import Transcriber, WhisperTranscriber
+from app.media import Transcriber, WhisperTranscriber, title_from_filename
 from app.workflow import run_auto_job
 from app.engines import DraftRequest, Engine, EngineError, MaterialInput, create_engine
 from app.models import ArticleDraft, ArticleMode, EditorialStyleProfile, Transcript
@@ -550,7 +550,7 @@ def create_app(
         get_style(store, style_profile_id or None)
 
         material = Material(
-            title=title.strip() or (Path(file.filename).stem if has_file else "Nagranie z linku"),
+            title=title.strip() or (title_from_filename(file.filename) if has_file else "Nagranie z linku"),
             title_auto=not title.strip(),
             category=category,
             topic=topic,

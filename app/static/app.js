@@ -280,7 +280,7 @@ async function renderForm(id) {
       <label for="angle">Kąt redakcyjny (opcjonalnie)</label>
       <input type="text" id="angle" value="${esc(m.angle)}" placeholder="np. koszty dla gospodarstw domowych">
       <label for="style">Profil stylu</label>
-      <select id="style"><option value="">— domyślny (WP Finanse) —</option>
+      <select id="style"><option value="">${profiles.some((p) => p.id === DEFAULT_PROFILE) ? "— domyślny (WP Finanse) —" : "— bez profilu —"}</option>
         ${profiles.filter((p) => p.id !== DEFAULT_PROFILE).map((p) => `<option value="${esc(p.id)}" ${p.id === m.style_profile_id ? "selected" : ""}>${esc(p.name)}</option>`).join("")}
       </select>
       <label for="transcript">Transkrypcja</label>
@@ -337,8 +337,15 @@ function stillOn(hash) {
 
 // Wynik akcji przypisujemy tylko, gdy redaktor nadal ogląda ten materiał – inaczej
 // odpowiedź dotycząca materiału A nadpisałaby stan materiału B otwartego w międzyczasie.
-function setMaterial(material) {
+// keepDraftEdits: akcja nie zmienia draftu (np. ponowna analiza) – niezapisane edycje
+// przeniesione między zakładkami zostają zamiast zniknąć po cichu.
+function setMaterial(material, { keepDraftEdits = false } = {}) {
   if (!stillOn(`#/m/${material.id}`)) return false;
+  state.savedDraft = material.draft;
+  if (keepDraftEdits && state.dirty && state.material?.id === material.id) {
+    state.material = { ...material, draft: state.material.draft };
+    return true;
+  }
   state.material = material;
   state.dirty = false;
   return true;
@@ -349,6 +356,7 @@ async function renderWorkspace(id) {
   const [material, profiles] = await Promise.all([api(`/api/materials/${id}`), api("/api/style-profiles")]);
   if (!stillOn(`#/m/${id}`)) return;
   state.material = material;
+  state.savedDraft = material.draft;
   state.dirty = false;
   state.profiles = profiles;
   if (material.status === "PROCESSING" || (material.status === "FAILED" && !material.transcript)) {
@@ -393,7 +401,9 @@ function drawWorkspace() {
   view.querySelector("#auto-run").addEventListener("click", (e) => {
     if (m.draft && !confirm("Automat wygeneruje nowy draft i zastąpi bieżący. Kontynuować?")) return;
     busy(e.target, "Uruchamiam…", async () => {
-      await api(`/api/materials/${m.id}/auto`, { method: "POST", body: {} });
+      // Po błędzie ponawiamy z zapamiętanymi ustawieniami (np. bez automatycznego zatwierdzania).
+      if (m.status === "FAILED") await api(`/api/materials/${m.id}/retry`, { method: "POST" });
+      else await api(`/api/materials/${m.id}/auto`, { method: "POST", body: {} });
       renderWorkspace.lastStage = "PROCESSING";
       renderWorkspace(m.id);
     });
@@ -503,7 +513,7 @@ function drawEvidence(root) {
 
 function analyze(button) {
   return busy(button, "Analizuję…", async () => {
-    if (!setMaterial(await api(`/api/materials/${state.material.id}/analyze`, { method: "POST" }))) return;
+    if (!setMaterial(await api(`/api/materials/${state.material.id}/analyze`, { method: "POST" }), { keepDraftEdits: true })) return;
     state.tab = "evidence";
     drawWorkspace();
     toast("Materiał dowodowy gotowy");
@@ -518,7 +528,7 @@ const DEFAULT_PROFILE = "wp-finanse";
 // Po drafcie brak profilu oznacza świadomy wybór "bez profilu".
 function effectiveProfile(m) {
   if (m.style_profile_id) return m.style_profile_id;
-  return m.draft ? "" : DEFAULT_PROFILE;
+  return m.draft || !state.profiles?.some((p) => p.id === DEFAULT_PROFILE) ? "" : DEFAULT_PROFILE;
 }
 
 function generatorCard(m) {
@@ -773,7 +783,7 @@ async function drawExport(root) {
       <p class="small muted">Eksport jest możliwy tylko dla draftu, który przeszedł weryfikację. Materiał kontrolny (cytaty z timecode, tezy, uwagi) nie jest przeznaczony do publikacji.</p>
       <div class="grid2">
         <div><label for="fmt">Format</label><select id="fmt"><option value="md">Markdown</option><option value="html">HTML</option></select></div>
-        <div><label for="ttl">Tytuł (HTML)</label><select id="ttl">${m.draft.title_options.map((t, i) => `<option value="${i}">${esc(t)}</option>`).join("")}</select></div>
+        <div><label for="ttl">Tytuł (HTML)</label><select id="ttl">${(state.savedDraft || m.draft).title_options.map((t, i) => `<option value="${i}">${esc(t)}</option>`).join("")}</select></div>
       </div>
       <label class="check"><input type="checkbox" id="ctl" checked> Dołącz materiał kontrolny</label>
       <div class="row" style="margin:.8rem 0"><button class="primary" id="copy">Kopiuj</button><button id="download">Pobierz plik</button></div>

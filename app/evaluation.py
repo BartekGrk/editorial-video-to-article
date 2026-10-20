@@ -18,7 +18,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from app import auto, pipeline
-from app.media import Transcriber
+from app.media import Transcriber, title_from_filename
 from app.store import STYLES_DIR
 from app.engines import DraftRequest, Engine, MaterialInput
 from app.models import ArticleDraft, ArticleMode, EditorialStyleProfile
@@ -93,7 +93,7 @@ def run_case(
     """Ocena jednego przypadku; z `transcriber` i plikiem nagrania – od dźwięku (z ASR)."""
     meta_path, ref_path = transcript_path.with_suffix(".json"), transcript_path.with_suffix(".md")
     meta = json.loads(meta_path.read_text(encoding="utf-8")) if meta_path.exists() else {}
-    title = meta.get("title", transcript_path.stem)
+    title = meta.get("title") or title_from_filename(transcript_path.name)
     reference_raw = transcript_path.read_text(encoding="utf-8")
 
     started = time.perf_counter()

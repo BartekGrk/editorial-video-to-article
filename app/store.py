@@ -187,8 +187,12 @@ DEFAULT_STYLE_ID = "wp-finanse"
 DELETED_BUILTINS_KEY = "deleted_builtin_styles"
 
 
+def _builtin_id(path: Path) -> str:
+    return path.stem.replace("_", "-")
+
+
 def builtin_style_ids() -> set[str]:
-    return {path.stem.replace("_", "-") for path in STYLES_DIR.glob("*.json")}
+    return {_builtin_id(path) for path in STYLES_DIR.glob("*.json")}
 
 
 def seed_builtin_styles(store: Store) -> None:
@@ -196,7 +200,7 @@ def seed_builtin_styles(store: Store) -> None:
     i nie przywraca profili, które redaktor świadomie usunął."""
     deleted = set(store.get_setting(DELETED_BUILTINS_KEY, []))
     for path in sorted(STYLES_DIR.glob("*.json")):
-        record_id = path.stem.replace("_", "-")
+        record_id = _builtin_id(path)
         if record_id not in deleted and store.get(StyleProfileRecord, record_id) is None:
             data = json.loads(path.read_text(encoding="utf-8"))
             store.save(StyleProfileRecord(id=record_id, source_count=0, **data))
