@@ -103,14 +103,3 @@ def write(engine: Engine, request: DraftRequest) -> DraftResult:
     if (report.ok and not repaired_report.ok) or (report.strict_ok and not repaired_report.strict_ok):
         return DraftResult(draft=draft, report=report, repaired=False, first_report=report)
     return DraftResult(draft=repaired, report=repaired_report, repaired=True, first_report=report)
-
-
-def video_link(video_url: str | None, seconds: int) -> str | None:
-    """Link do momentu nagrania: YouTube (`t=`) lub fragment mediów (`#t=`)."""
-    if not video_url:
-        return None
-    if "youtube.com" in video_url or "youtu.be" in video_url:
-        separator = "&" if "?" in video_url else "?"
-        return f"{video_url}{separator}t={seconds}"
-    return f"{video_url.split('#')[0]}#t={seconds}"
-

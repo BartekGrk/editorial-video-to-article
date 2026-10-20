@@ -36,6 +36,7 @@ class CaseResult:
     inline_failed_first: int
     repaired: bool
     final_ok: bool
+    quotes_ok: bool
     claims_total: int
     claims_flagged: int
     claims_without_source: int
@@ -131,7 +132,8 @@ def run_case(
         quotes_verified_first=_verified(first),
         inline_failed_first=sum(not q.verified for q in first.inline_quotes),
         repaired=result.repaired,
-        final_ok=result.report.ok,
+        final_ok=result.report.strict_ok,
+        quotes_ok=result.report.quotes_ok,
         claims_total=len(draft.claims),
         claims_flagged=sum(c.requires_verification for c in draft.claims),
         claims_without_source=len(result.report.claims),
@@ -176,8 +178,8 @@ def report_markdown(results: list[CaseResult], engine_name: str) -> str:
             f"- Przypadków: {len(results)}; końcowo bez błędów weryfikacji: {sum(r.final_ok for r in results)}",
             f"- Cytaty poprawne w pierwszej wersji: {verified}/{total_quotes} ({rate})",
             f"- Wymagały poprawki: {sum(r.repaired for r in results)}",
-            "- Warunek pilota: zero sfabrykowanych cytatów w wersji końcowej "
-            + ("— spełniony." if all(r.final_ok for r in results) else "— NIESPEŁNIONY."),
+            "- Warunek pilota: zero sfabrykowanych lub źle przypisanych cytatów w wersji końcowej "
+            + ("— spełniony." if all(r.quotes_ok for r in results) else "— NIESPEŁNIONY."),
         ]
 
     lines += [

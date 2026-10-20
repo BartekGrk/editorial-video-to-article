@@ -493,3 +493,13 @@ def test_eleventh_review_cases(draft, transcript):
     # krótka nazwa własna złamana między liniami to nie cytat
     draft.sections[0].paragraphs.append("Rolnicy korzystają z programu „Czyste\nPowietrze” od lat.")
     assert verify_draft(draft, transcript).ok
+
+
+def test_twelfth_review_multiline_quotes(draft, transcript):
+    for lead in (
+        "Kowalski twierdzi: „Rząd obniży podatki\ndla wszystkich firm\nod przyszłego miesiąca”.",
+        'Kowalski twierdzi: "Rząd obniży podatki\ndla wszystkich firm od jutra".',
+        "Kowalski twierdzi: »Rząd obniży podatki\ndla wszystkich firm od jutra«.",
+        'Kowalski twierdzi: „Rząd obniży "podatki"\ndla wszystkich firm od jutra”.',
+    ):
+        assert not verify_draft(draft.model_copy(update={"lead": lead}), transcript).ok, lead

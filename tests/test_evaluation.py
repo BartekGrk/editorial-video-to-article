@@ -15,7 +15,7 @@ def test_evaluation_runs_on_examples():
     assert all(r.final_ok for r in results.values())
 
     report = report_markdown(list(results.values()), "heuristic")
-    assert "Warunek pilota: zero sfabrykowanych cytatów w wersji końcowej — spełniony." in report
+    assert "Warunek pilota: zero sfabrykowanych lub źle przypisanych cytatów w wersji końcowej — spełniony." in report
     assert "## Ocena redaktora" in report
 
 

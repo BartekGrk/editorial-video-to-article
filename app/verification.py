@@ -24,7 +24,6 @@ _NON_WORD = re.compile(r"[^\w]+", re.UNICODE)
 _INLINE_QUOTE = re.compile(
     r"„([^”“„]+)[”“]|„([^”“„\"]+)\"|“([^”]+)”|\"([^\"]+)\"|»([^«]+)«|«([^»]+)»"
 )
-_CROSS_LINE_QUOTE = re.compile(r"„([^”“„\"\n]*\n[^”“„\"\n]*)[”“]|“([^”“„\"\n]*\n[^”“„\"\n]*)”")
 # Krótkie frazy w cudzysłowie to zwykle nazwy własne (programy, ustawy),
 # a nie cytaty; sprawdzamy tylko wypowiedzi od 4 słów.
 _MIN_INLINE_QUOTE_WORDS = 4
@@ -66,8 +65,6 @@ apelują alarmują narzekają skarżą komentują relacjonują przekonywali
 # myślniku traktujemy jako dalszy ciąg wypowiedzi i sprawdzamy.
 _VERB_GROUP = "(?:" + "|".join(_ATTRIBUTION_VERBS) + ")"
 _ATTRIBUTION = re.compile(r"^" + _VERB_GROUP + r"\b")
-# Linia zawierająca gdziekolwiek "- mówi …" to wypowiedź z przypisaniem (także od małej litery).
-_HAS_ATTRIBUTION = re.compile(r"\s[-–—]\s+" + _VERB_GROUP + r"\b")
 # Skrót cytatu wielokropkiem jest dozwolony, ale z samych pojedynczych słów
 # dałoby się skleić zdanie o odwrotnym sensie.
 _MIN_FRAGMENT_WORDS = 3
@@ -136,6 +133,17 @@ class VerificationReport(BaseModel):
 
     # Znaczniki [[cytat:N]] z błędnym numerem, których nie dało się zastąpić treścią.
     unresolved_markers: list[str] = []
+
+    @computed_field
+    @property
+    def quotes_ok(self) -> bool:
+        """Wszystkie cytaty (lista i tekst) dosłowne i prawidłowo przypisane – miara pilota."""
+        return (
+            all(q.status == QuoteStatus.VERIFIED for q in self.quotes)
+            and all(q.verified for q in self.inline_quotes)
+            and not self.unresolved_markers
+            and not self.attribution_warnings
+        )
 
     @computed_field
     @property
@@ -391,40 +399,53 @@ def extract_inline_quotes(draft: ArticleDraft, speakers=()) -> list[tuple[str, s
         places += [(f"sekcja {s_no}, akapit {p_no}", p) for p_no, p in enumerate(section.paragraphs, start=1)]
     labels = [*speakers, *(q.speaker for q in draft.quotes)]
     cores = sorted({q.text.strip().rstrip(".") for q in draft.quotes if q.text.strip()}, key=len, reverse=True)
+
+    def worth_checking(quoted: str) -> bool:
+        return len(normalize(quoted).split()) >= _MIN_INLINE_QUOTE_WORDS or normalize(quoted) in declared
+
     found = []
     for location, text in places:
         lines = text.split("\n")
+        offsets = [0]
+        for line in lines[:-1]:
+            offsets.append(offsets[-1] + len(line) + 1)
+        # Zajęte fragmenty (pozycje w całym akapicie) – żeby kolejne przebiegi nie łączyły
+        # różnych cytatów ani nie liczyły tego samego dwa razy.
+        taken: list[tuple[int, int]] = []
+
+        def free(start: int, end: int) -> bool:
+            return not any(a < end and start < b for a, b in taken)
+
         for line_no, line in enumerate(lines):
+            base = offsets[line_no]
             next_line = lines[line_no + 1] if line_no + 1 < len(lines) else None
             # Najpierw dosłowne wystąpienia cytatów z listy (także z wewnętrznym “…”,
             # którego wyrażenie regularne nie obejmie), potem pozostałe cudzysłowy.
-            taken: list[tuple[int, int]] = []
             for core in cores:
                 for opening, closing in (("„", "”"), ("„", "“"), ("“", "”"), ('"', '"'), ("»", "«")):
                     needle = f"{opening}{core}{closing}"
                     start = 0
                     while (position := line.find(needle, start)) >= 0:
                         start = position + len(needle)
-                        if any(a <= position < b for a, b in taken):
-                            continue
-                        taken.append((position, start))
-                        found.append((location, core, "quote", quote_context(line, position, start, next_line)))
+                        if free(base + position, base + start):
+                            taken.append((base + position, base + start))
+                            found.append((location, core, "quote", quote_context(line, position, start, next_line)))
             for match in _INLINE_QUOTE.finditer(line):
-                if any(a <= match.start() < b for a, b in taken):
-                    continue
                 quoted = next(g for g in match.groups() if g is not None).strip()
-                if len(normalize(quoted).split()) >= _MIN_INLINE_QUOTE_WORDS or normalize(quoted) in declared:
-                    context = quote_context(line, match.start(), match.end(), next_line)
-                    found.append((location, quoted, "quote", context))
+                if free(base + match.start(), base + match.end()) and worth_checking(quoted):
+                    taken.append((base + match.start(), base + match.end()))
+                    found.append((location, quoted, "quote", quote_context(line, match.start(), match.end(), next_line)))
             # Akapit z myślnikiem to zawsze wypowiedź (nie nazwa własna), więc sprawdzamy
             # też najkrótsze; może zawierać wtrącenia w cudzysłowie – sprawdzamy całość.
             dash = dash_quotes(line, labels, starts_paragraph=line_no == 0)
             found += [(location, q, "dash", line) for q in dash if normalize(q)]
-        # Cudzysłów otwarty w jednej linii akapitu i zamknięty w następnej (bez innych
-        # cudzysłowów po drodze – inaczej łączylibyśmy dwa różne cytaty).
-        for match in _CROSS_LINE_QUOTE.finditer(text):
+        # Cudzysłów otwarty w jednej linii akapitu i zamknięty w kolejnej (dowolnie dalekiej).
+        for match in _INLINE_QUOTE.finditer(text):
+            if "\n" not in match.group(0) or not free(match.start(), match.end()):
+                continue
             quoted = " ".join(next(g for g in match.groups() if g is not None).split())
-            if len(normalize(quoted).split()) >= _MIN_INLINE_QUOTE_WORDS or normalize(quoted) in declared:
+            if worth_checking(quoted):
+                taken.append((match.start(), match.end()))
                 found.append((location, quoted, "quote", text))
     return found
 

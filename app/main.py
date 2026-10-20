@@ -26,7 +26,7 @@ from app.workflow import run_auto_job
 from app.engines import DraftRequest, Engine, EngineError, MaterialInput, create_engine
 from app.models import ArticleDraft, ArticleMode, EditorialStyleProfile, Transcript
 from app.render import render_html, render_markdown
-from app.store import DEFAULT_STYLE_ID, AutoSettings, ConditionFailed, Material, MaterialStatus, Store, StyleProfileRecord, seed_builtin_styles
+from app.store import DEFAULT_STYLE_ID, DELETED_BUILTINS_KEY, AutoSettings, ConditionFailed, Material, builtin_style_ids, MaterialStatus, Store, StyleProfileRecord, seed_builtin_styles
 from app.transcript import TranscriptParseError, parse_transcript
 from app.verification import VerificationReport, verify_draft
 
@@ -59,6 +59,18 @@ class MaterialFields(BaseModel):
     transcript_has_speakers: bool = True
     external_processing_allowed: bool = False
     style_profile_id: str | None = None
+
+
+class MaterialSummary(BaseModel):
+    id: str
+    title: str
+    category: str
+    topic: str
+    status: MaterialStatus
+    mode: ArticleMode | None
+    job_stage: str | None
+    updated_at: str
+    revision: int
 
 
 class MaterialView(Material):
@@ -171,13 +183,6 @@ def _recover_interrupted_jobs(store: Store) -> None:
             )
 
 
-def _approval(current: Material, viewed: Material) -> dict:
-    """Zatwierdzamy tylko draft, który redaktor oglądał (porównanie wersji z żądania)."""
-    if current.draft != viewed.draft or current.report is None or not current.report.ok:
-        raise HTTPException(status_code=409, detail="Draft zmienił się w trakcie – odśwież i sprawdź go ponownie")
-    return {"status": MaterialStatus.APPROVED}
-
-
 def _engine_call(fn, *args):
     try:
         return fn(*args)
@@ -224,24 +229,36 @@ def create_app(
             raise HTTPException(status_code=404, detail="Nie ma takiego profilu stylu")
         return record.profile
 
-    def commit(store: Store, material: Material, fields) -> Material:
+    def commit(store: Store, material: Material, fields, condition=None) -> Material:
         """Zapis wyniku operacji na materiale – tylko zmienionych pól i tylko na aktualnym stanie.
 
         Analiza i draft trwają długo; zapis całej kopii sprzed wywołania cofałby zmiany
         zrobione w międzyczasie (edycje redaktora, usunięcie, uruchomiony automat).
+        Warunki sprawdzamy w tej samej transakcji co zapis (`Store.update(condition=…)`).
         `fields` to słownik albo funkcja aktualnego materiału zwracająca słownik.
         """
-        current = store.get(Material, material.id)
-        if current is None:
-            raise HTTPException(status_code=404, detail="Materiał został usunięty w trakcie operacji")
-        if current.status == MaterialStatus.PROCESSING:
-            raise HTTPException(status_code=409, detail="W międzyczasie uruchomiono automat – wynik pominięto")
-        if (current.transcript_raw, current.transcript_has_speakers) != (
-            material.transcript_raw,
-            material.transcript_has_speakers,
-        ):
-            raise HTTPException(status_code=409, detail="Transkrypcja zmieniła się w trakcie operacji – uruchom ją ponownie")
-        updated = store.update(Material, material.id, **(fields(current) if callable(fields) else fields))
+        same_transcript = (material.transcript_raw, material.transcript_has_speakers)
+
+        def unchanged(current: Material) -> bool:
+            return (
+                current.status != MaterialStatus.PROCESSING
+                and (current.transcript_raw, current.transcript_has_speakers) == same_transcript
+                and (condition is None or condition(current))
+            )
+
+        try:
+            updated = store.update(
+                Material,
+                material.id,
+                condition=unchanged,
+                compute=fields if callable(fields) else None,
+                **({} if callable(fields) else fields),
+            )
+        except ConditionFailed as error:
+            raise HTTPException(
+                status_code=409,
+                detail="Materiał zmienił się w trakcie operacji (automat, transkrypcja albo nowszy draft) – odśwież",
+            ) from error
         if updated is None:
             raise HTTPException(status_code=404, detail="Materiał został usunięty w trakcie operacji")
         return updated
@@ -319,8 +336,9 @@ def create_app(
     # Materiały ------------------------------------------------------------
 
     @app.get("/api/materials")
-    def list_materials(store: Store = Depends(get_store)) -> list[Material]:
-        return store.list(Material)
+    def list_materials(store: Store = Depends(get_store)) -> list[MaterialSummary]:
+        # Lista bez transkrypcji i draftów – odświeżana co kilka sekund w trakcie automatu.
+        return [MaterialSummary.model_validate(m.model_dump()) for m in store.list(Material)]
 
     @app.post("/api/materials", status_code=201)
     def create_material(fields: MaterialFields, store: Store = Depends(get_store)) -> MaterialView:
@@ -457,7 +475,11 @@ def create_app(
         updated = commit(
             store,
             material,
-            lambda current: _approval(current, material),
+            {"status": MaterialStatus.APPROVED},
+            # Zatwierdzamy tylko wersję, którą oglądał redaktor, i tylko poprawnie zweryfikowaną.
+            condition=lambda current: current.revision == material.revision
+            and current.report is not None
+            and current.report.ok,
         )
         return _view(updated)
 
@@ -576,7 +598,8 @@ def create_app(
     @app.post("/api/materials/{material_id}/retry", status_code=202)
     def retry_auto(request: Request, material: Material = Depends(get_material)) -> MaterialView:
         """Ponowienie automatu po błędzie: od transkrypcji, jeśli jej jeszcze nie ma."""
-        _ensure_idle(material)
+        if material.status != MaterialStatus.FAILED:
+            raise HTTPException(status_code=409, detail="Ponowić można tylko automat zakończony błędem")
         _ensure_consent(request.app.state.engine, material)
         options = material.auto_settings or AutoRunOptions()
         if material.transcript_raw.strip():
@@ -638,6 +661,10 @@ def create_app(
     def delete_profile(profile_id: str, store: Store = Depends(get_store)) -> None:
         if not store.delete(StyleProfileRecord, profile_id):
             raise HTTPException(status_code=404, detail="Nie ma takiego profilu stylu")
+        if profile_id in builtin_style_ids():
+            # Zapamiętujemy, żeby wbudowany profil nie wrócił po restarcie serwera.
+            deleted = set(store.get_setting(DELETED_BUILTINS_KEY, []))
+            store.set_setting(DELETED_BUILTINS_KEY, sorted(deleted | {profile_id}))
 
     # Narzędzia bezstanowe (np. do integracji lub skryptów) ----------------
 

@@ -195,3 +195,34 @@ def test_long_operation_does_not_overwrite_newer_state(raw_transcript):
 
 from app.models import ArticleDraft  # noqa: E402
 from app.store import Material  # noqa: E402
+
+
+def test_list_is_slim_and_retry_only_after_failure(client, raw_transcript):
+    mid = client.post("/api/materials", json={"title": "x", "transcript_raw": raw_transcript}).json()["id"]
+    listed = client.get("/api/materials").json()[0]
+    assert "transcript_raw" not in listed and listed["revision"] >= 1
+    assert client.post(f"/api/materials/{mid}/retry").status_code == 409
+
+
+def test_deleted_builtin_profile_stays_deleted_after_restart():
+    from app.engines import HeuristicEngine
+    from app.main import create_app
+    from app.store import Store
+
+    store = Store(":memory:")
+    client = TestClient(create_app(store, HeuristicEngine()))
+    assert client.delete("/api/style-profiles/wp-finanse").status_code == 204
+    create_app(store, HeuristicEngine())  # "restart" na tej samej bazie
+    assert client.get("/api/style-profiles").json() == []
+
+
+def test_revision_increments_on_every_write(raw_transcript):
+    from app.store import Store
+
+    store = Store(":memory:")
+    material = Material(title="x", transcript_raw=raw_transcript)
+    store.save(material)
+    first = store.get(Material, material.id).revision
+    store.save(store.get(Material, material.id))
+    store.update(Material, material.id, title="y")
+    assert store.get(Material, material.id).revision == first + 2

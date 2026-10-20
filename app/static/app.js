@@ -389,7 +389,7 @@ function drawWorkspace() {
       </section>
     </div>`;
 
-  view.querySelectorAll("[data-tab]").forEach((b) => b.addEventListener("click", () => { state.tab = b.dataset.tab; drawWorkspace(); }));
+  view.querySelectorAll("[data-tab]").forEach((b) => b.addEventListener("click", () => { stashDraftEdits(); state.tab = b.dataset.tab; drawWorkspace(); }));
   view.querySelector("#auto-run").addEventListener("click", (e) => {
     if (m.draft && !confirm("Automat wygeneruje nowy draft i zastąpi bieżący. Kontynuować?")) return;
     busy(e.target, "Uruchamiam…", async () => {
@@ -647,8 +647,9 @@ function drawDraft(root) {
     ${generatorCard(m)}`;
 
   const form = root.querySelector("#draft-form");
-  // Stan formularza tuż po narysowaniu (zapisany draft) – do wykrycia niezapisanych zmian.
+  // Stan formularza tuż po narysowaniu – do wykrycia niezapisanych zmian.
   const savedState = JSON.stringify(readDraft(form));
+  form.dataset.saved = savedState;
   const updateCount = () => {
     const text = [...form.querySelectorAll(".paragraphs")].map((t) => t.value).join(" ") + " " + form.querySelector("#lead").value;
     form.querySelector("#wordcount").textContent = `${text.split(/\s+/).filter(Boolean).length} słów (lead + treść)`;
@@ -680,7 +681,7 @@ function drawDraft(root) {
     drawWorkspace();
     toast("Draft zatwierdzony");
   }));
-  form.querySelector("#to-export").addEventListener("click", () => { state.tab = "export"; drawWorkspace(); });
+  form.querySelector("#to-export").addEventListener("click", () => { stashDraftEdits(); state.tab = "export"; drawWorkspace(); });
   bindDeclareQuotes(root, () => readDraft(form));
   bindGoto(root);
   bindGenerator(root);
@@ -710,6 +711,17 @@ function readDraft(form) {
     claims: [...d.claims],
     editor_notes: form.querySelector("#notes").value.split("\n").map((n) => n.trim()).filter(Boolean),
   };
+}
+
+// Przy przełączeniu zakładki zachowujemy niezapisane edycje (formularz zostanie narysowany od nowa).
+function stashDraftEdits() {
+  const form = document.getElementById("draft-form");
+  if (!form) return;
+  const current = JSON.stringify(readDraft(form));
+  if (current !== form.dataset.saved) {
+    state.material = { ...state.material, draft: JSON.parse(current) };
+    state.dirty = true;
+  }
 }
 
 // Zmiana struktury (dodanie/usunięcie elementu) bez utraty niezapisanych edycji tekstu.
@@ -754,6 +766,7 @@ async function drawExport(root) {
     return;
   }
   root.innerHTML = `
+    ${state.dirty ? '<div class="verify warn"><strong>Masz niezapisane zmiany w drafcie.</strong> Eksport pokazuje ostatnią zapisaną i zweryfikowaną wersję – wróć do zakładki Draft i kliknij „Zapisz i sprawdź”.</div>' : ""}
     ${verificationBox(m.report)}
     <div class="card">
       <h2>Eksport do CMS (ręczny)</h2>

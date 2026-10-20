@@ -112,15 +112,17 @@ class Store:
                 self._conn.execute(
                     f"CREATE TABLE IF NOT EXISTS {table} (id TEXT PRIMARY KEY, data TEXT NOT NULL, updated_at TEXT NOT NULL)"
                 )
+            self._conn.execute("CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT NOT NULL)")
 
     def save(self, record: BaseModel) -> None:
-        if isinstance(record, Material):
-            record.updated_at = _now()
-            with self._lock:
-                row = self._conn.execute("SELECT data FROM materials WHERE id = ?", (record.id,)).fetchone()
-            record.revision = (Material.model_validate_json(row[0]).revision + 1) if row else max(record.revision, 1)
         table = _TABLES[type(record)]
         with self._lock, self._conn:
+            if isinstance(record, Material):
+                record.updated_at = _now()
+                row = self._conn.execute(
+                    "SELECT json_extract(data, '$.revision') FROM materials WHERE id = ?", (record.id,)
+                ).fetchone()
+                record.revision = (row[0] or 0) + 1 if row else max(record.revision, 1)
             self._conn.execute(
                 f"INSERT OR REPLACE INTO {table} (id, data, updated_at) VALUES (?, ?, ?)",
                 (record.id, record.model_dump_json(), _now()),
@@ -136,12 +138,13 @@ class Store:
             rows = self._conn.execute(f"SELECT data FROM {_TABLES[model]} ORDER BY updated_at DESC").fetchall()
         return [model.model_validate_json(r[0]) for r in rows]
 
-    def update(self, model: type[T], record_id: str, condition=None, **fields) -> T | None:
+    def update(self, model: type[T], record_id: str, condition=None, compute=None, **fields) -> T | None:
         """Atomowy odczyt i zapis zmienionych pól; None, gdy rekordu już nie ma.
 
         Osobne get + save pozwalałyby zadaniu w tle "wskrzesić" rekord usunięty
         przez redaktora między odczytem a zapisem. `condition(aktualny)` sprawdzany
-        w tej samej transakcji – gdy zwróci False, rzucamy `ConditionFailed`.
+        w tej samej transakcji – gdy zwróci False, rzucamy `ConditionFailed`;
+        `compute(aktualny)` zwraca dodatkowe pola wyliczane z aktualnego stanu.
         """
         table = _TABLES[model]
         with self._lock, self._conn:
@@ -151,7 +154,7 @@ class Store:
             current = model.model_validate_json(row[0])
             if condition is not None and not condition(current):
                 raise ConditionFailed(record_id)
-            record = current.model_copy(update=fields)
+            record = current.model_copy(update={**fields, **(compute(current) if compute else {})})
             if isinstance(record, Material):
                 record.updated_at = _now()
                 record.revision = current.revision + 1
@@ -160,6 +163,17 @@ class Store:
                 (record.model_dump_json(), _now(), record_id),
             )
         return record
+
+    def get_setting(self, key: str, default=None):
+        with self._lock:
+            row = self._conn.execute("SELECT value FROM settings WHERE key = ?", (key,)).fetchone()
+        return json.loads(row[0]) if row else default
+
+    def set_setting(self, key: str, value) -> None:
+        with self._lock, self._conn:
+            self._conn.execute(
+                "INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)", (key, json.dumps(value, ensure_ascii=False))
+            )
 
     def delete(self, model: type[BaseModel], record_id: str) -> bool:
         with self._lock, self._conn:
@@ -170,12 +184,19 @@ class Store:
 # Wbudowane profile stylu (opis formatu, bez treści artykułów źródłowych).
 STYLES_DIR = Path(__file__).parent / "styles"
 DEFAULT_STYLE_ID = "wp-finanse"
+DELETED_BUILTINS_KEY = "deleted_builtin_styles"
+
+
+def builtin_style_ids() -> set[str]:
+    return {path.stem.replace("_", "-") for path in STYLES_DIR.glob("*.json")}
 
 
 def seed_builtin_styles(store: Store) -> None:
-    """Dodaje wbudowane profile, jeśli ich nie ma; nie nadpisuje zmian redaktora."""
+    """Dodaje wbudowane profile, jeśli ich nie ma; nie nadpisuje zmian redaktora
+    i nie przywraca profili, które redaktor świadomie usunął."""
+    deleted = set(store.get_setting(DELETED_BUILTINS_KEY, []))
     for path in sorted(STYLES_DIR.glob("*.json")):
         record_id = path.stem.replace("_", "-")
-        if store.get(StyleProfileRecord, record_id) is None:
+        if record_id not in deleted and store.get(StyleProfileRecord, record_id) is None:
             data = json.loads(path.read_text(encoding="utf-8"))
             store.save(StyleProfileRecord(id=record_id, source_count=0, **data))

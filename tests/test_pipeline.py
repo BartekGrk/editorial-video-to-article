@@ -58,13 +58,6 @@ def test_write_repairs_once_when_verification_fails(transcript):
     assert result.repaired and result.report.ok and engine.repair_calls == 1
 
 
-def test_video_link():
-    assert pipeline.video_link("https://www.youtube.com/watch?v=x", 12) == "https://www.youtube.com/watch?v=x&t=12"
-    assert pipeline.video_link("https://youtu.be/x", 12) == "https://youtu.be/x?t=12"
-    assert pipeline.video_link("https://cdn.example/v.mp4#t=3", 12) == "https://cdn.example/v.mp4#t=12"
-    assert pipeline.video_link("", 12) is None
-
-
 def test_fix_quote_timecodes_moves_exact_quote(transcript, draft):
     draft.quotes[1] = draft.quotes[1].model_copy(update={"timecode_seconds": 5})
     fixed = pipeline.fix_quote_timecodes(draft, transcript)
