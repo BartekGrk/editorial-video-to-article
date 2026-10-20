@@ -8,7 +8,6 @@ Moduł nie zależy od bazy ani API: korzystają z niego zarówno zadania w tle
 aplikacji (`app/jobs.py`), jak i skrypt `scripts/auto.py`.
 """
 
-import re
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from enum import Enum
@@ -18,6 +17,7 @@ from app import pipeline
 from app.engines.base import DraftRequest, Engine, MaterialInput
 from app.media import FetchedMedia, MediaError, Transcriber, fetch_media, merge_asr_segments, to_wav
 from app.models import ArticleMode, EditorialStyleProfile, EvidencePack, Transcript, TranscriptSegment
+from app.quote_markers import clean_speaker_label
 from app.transcript import build_transcript_raw, format_timecode, parse_transcript
 
 
@@ -93,9 +93,7 @@ def label_speakers(engine: Engine, title: str, segments: list[TranscriptSegment]
 
     by_index = {}
     for label in labels.labels:
-        # Bez dwukropka (parser "Mówca: treść") i bez myślników (parser akapitów dialogowych).
-        cleaned = re.sub(r"\s+[-–—]\s+", ", ", label.speaker.replace(":", " "))
-        name = " ".join(cleaned.split())[:_MAX_SPEAKER_LENGTH]
+        name = clean_speaker_label(label.speaker)[:_MAX_SPEAKER_LENGTH]
         if 0 <= label.index < len(segments) and name:
             by_index[label.index] = name
     if len(by_index) < _MIN_LABEL_COVERAGE * len(segments):

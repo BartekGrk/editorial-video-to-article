@@ -21,7 +21,7 @@ from app.models import ATTRIBUTION_VERBS, ArticleDraft, Quote, Section, Transcri
 _INLINE_MARKER = re.compile(r"\[\[\s*(?:cytat|wypowied[źz])\s*[:\s]\s*(\d+)\s*\]\]", re.IGNORECASE)
 _PARAGRAPH_MARKER = re.compile(r"^\s*\[\[\s*wypowied[źz]\s*[:\s]\s*(\d+)\s*\]\]\s*$", re.IGNORECASE)
 # Każda pozostałość w podwójnych nawiasach to nierozwinięty znacznik – nie może trafić do CMS.
-ANY_MARKER = re.compile(r"\[\[[^\]]*\]\]")
+ANY_MARKER = re.compile(r"\[\[[^\]\n]{0,40}\]{0,2}")
 # Etykiety ogólne z transkrypcji (anonimowi rozmówcy) – w tekście opisujemy rolę, nie numer.
 _GENERIC = re.compile(r"^(?:rozmówca|rozmówczyni|mówca|mówczyni)\b", re.IGNORECASE)
 UNHEARD = "słyszymy w nagraniu"
@@ -32,8 +32,13 @@ def speaker_display(speaker: str | None) -> str:
         return UNHEARD
     if _GENERIC.match(speaker):
         return "rozmówczyni" if speaker.lower().startswith("rozmówczyni") else "rozmówca"
-    # Myślnik w etykiecie ("Jan Kowalski - prezes") parser akapitu dialogowego wziąłby za nową wypowiedź.
-    return re.sub(r"\s+[-–—]\s+", ", ", speaker)
+    return clean_speaker_label(speaker)
+
+
+def clean_speaker_label(label: str) -> str:
+    """Etykieta bez dwukropka (parser "Mówca: treść") i bez myślników ("Jan Kowalski - prezes"),
+    które parser akapitu dialogowego wziąłby za początek nowej wypowiedzi."""
+    return " ".join(re.sub(r"\s+[-–—]\s+", ", ", label.replace(":", " ")).split())
 
 
 def _transcript_speaker(quote: Quote, transcript: Transcript | None) -> str | None:
@@ -94,10 +99,6 @@ def expand_markers(draft: ArticleDraft, transcript: Transcript | None = None) ->
             ],
         }
     )
-
-
-def has_markers(draft: ArticleDraft) -> bool:
-    return bool(leftover_markers(draft))
 
 
 def leftover_markers(draft: ArticleDraft) -> list[str]:

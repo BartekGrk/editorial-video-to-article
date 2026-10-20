@@ -108,8 +108,6 @@ class InlineQuoteCheck(BaseModel):
     declared: bool = True
     # "dash" – akapit dialogowy z myślnikiem, "quote" – tekst w cudzysłowie.
     kind: str = "quote"
-    # Nazwiska innych znanych mówców w zdaniu z cytatem ("Minister Anna Nowak mówi: „…”").
-    conflicting_names: list[str] = []
 
 
 class VerificationReport(BaseModel):
@@ -391,32 +389,11 @@ def extract_inline_quotes(draft: ArticleDraft, speakers=()) -> list[tuple[str, s
     return found
 
 
-_SENTENCE_END = re.compile(r"[.!?…]\s|\n")
-
-
-def _quote_context(source: str, quote: str, kind: str) -> str:
-    """Zdanie z cytatem (dla akapitu dialogowego – cała linia z przypisaniem)."""
-    for line in source.splitlines():
-        if kind == "dash":
-            if normalize(quote) and normalize(quote) in normalize(line):
-                return line
-            continue
-        position = line.find(quote)
-        if position < 0:
-            continue
-        ends_before = list(_SENTENCE_END.finditer(line, 0, position))
-        start = ends_before[-1].end() if ends_before else 0
-        after = _SENTENCE_END.search(line, position + len(quote) + 1)
-        return line[start : after.start() + 1 if after else len(line)]
-    return source
-
-
 def check_inline_quotes(draft: ArticleDraft, transcript: Transcript) -> list[InlineQuoteCheck]:
     declared = [(normalize(q.text), q) for q in draft.quotes]
     checks = []
     speakers = {segment.speaker for segment in transcript.segments if segment.speaker}
-    known_names = _speaker_names(speakers)
-    for location, text, kind, source in extract_inline_quotes(draft, speakers):
+    for location, text, kind, _source in extract_inline_quotes(draft, speakers):
         matches = find_quotes(text, transcript)
         options, _ = _fragment_options(text)
         normalized = normalize(text)
@@ -436,12 +413,6 @@ def check_inline_quotes(draft: ArticleDraft, transcript: Transcript) -> list[Inl
             # W ostrzeżeniu podajemy rozpoznanego mówcę – "None" nie dałoby się zadeklarować.
             index = agreed[0] if agreed else labelled[0]
         speaker = transcript.segments[index].speaker if index is not None else None
-        conflicting: list[str] = []
-        if matches and known_names:
-            mentioned = [n for n in known_names if n in _quote_context(source, text, kind)]
-            own = set(_speaker_names([speaker] if speaker else []))
-            if mentioned and not own.intersection(mentioned):
-                conflicting = mentioned
         checks.append(
             InlineQuoteCheck(
                 location=location,
@@ -451,25 +422,25 @@ def check_inline_quotes(draft: ArticleDraft, transcript: Transcript) -> list[Inl
                 speaker=speaker,
                 declared=is_declared,
                 kind=kind,
-                conflicting_names=conflicting,
             )
         )
     return checks
 
 
 def attribution_warnings(checks: list[InlineQuoteCheck]) -> list[str]:
-    conflicts = [
-        f"W zdaniu z cytatem „{c.text}” ({c.location}) pada nazwisko {', '.join(c.conflicting_names)}, "
-        f"a w nagraniu te słowa mówi: {c.speaker or 'mówca nieustalony'}."
-        for c in checks
-        if c.verified and c.conflicting_names
-    ]
-    return conflicts + [
+    return [
         f"Cytat „{c.text}” ({c.location}) nie ma na liście cytatów pozycji z mówcą – w nagraniu mówi: {c.speaker}. "
         "Sprawdź przypisanie w tekście."
         for c in checks
         if c.verified and not c.declared
     ]
+
+
+def _attribution_conflicts(draft: ArticleDraft, transcript: Transcript) -> list[str]:
+    # Import w funkcji: attribution korzysta z check_quote z tego modułu.
+    from app.attribution import attribution_conflicts
+
+    return attribution_conflicts(draft, transcript)
 
 
 def _leftover_markers(draft: ArticleDraft) -> list[str]:
@@ -510,7 +481,7 @@ def verify_draft(draft: ArticleDraft, transcript: Transcript) -> VerificationRep
         quotes=[check_quote(q, transcript) for q in draft.quotes],
         claims=claim_checks,
         inline_quotes=inline,
-        attribution_warnings=attribution_warnings(inline),
+        attribution_warnings=attribution_warnings(inline) + _attribution_conflicts(draft, transcript),
         unresolved_markers=_leftover_markers(draft),
         format_warnings=_format_warnings(draft),
     )
