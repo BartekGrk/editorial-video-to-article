@@ -111,14 +111,21 @@ def test_validation_error_is_retried_once(transcript):
     assert len(messages.calls) == 2
 
 
-def test_draft_markers_are_expanded_by_app(transcript, draft):
+def test_engine_returns_markers_and_pipeline_expands_them(transcript, draft):
+    from app import pipeline
+
     output = _draft_output(
         draft,
         lead="Rozmówcy: [[cytat:1]].",
         sections=[{"heading": None, "paragraphs": ["[[wypowiedź:2]]"]}],
+        # model podaje złego mówcę – przypisanie i tak pochodzi z transkrypcji
+        quotes=[draft.quotes[0].model_dump(), {**draft.quotes[1].model_dump(), "speaker": "Anna Nowak, minister"}],
     )
-    engine, _ = _engine(output)
-    result = engine.write_draft(_request(transcript))
-    assert result.lead == "Rozmówcy: „Oddaję, bo automat jest w sklepie obok domu”."
-    assert result.sections[0].paragraphs == ["- Za te trzydzieści groszy nie będę stać w kolejce - mówi Przechodzień 2."]
-    assert "[[" in engine.client.beta.messages.calls[0]["system"]
+    engine, messages = _engine([output, output, output])
+    assert engine.write_draft(_request(transcript)).lead == "Rozmówcy: [[cytat:1]]."
+    result = pipeline.write(engine, _request(transcript))
+    assert result.draft.lead == "Rozmówcy: „Oddaję, bo automat jest w sklepie obok domu”."
+    assert result.draft.sections[0].paragraphs == ["- Za te trzydzieści groszy nie będę stać w kolejce - mówi Przechodzień 2."]
+    assert not result.report.ok  # deklaracja "Anna Nowak" niezgodna z transkrypcją
+    # poprawka dostała wersję ze znacznikami, nie rozwinięty tekst
+    assert "[[wypowiedź:2]]" in messages.calls[2]["messages"][0]["content"]

@@ -108,6 +108,8 @@ class InlineQuoteCheck(BaseModel):
     declared: bool = True
     # "dash" – akapit dialogowy z myślnikiem, "quote" – tekst w cudzysłowie.
     kind: str = "quote"
+    # Nazwiska innych znanych mówców w zdaniu z cytatem ("Minister Anna Nowak mówi: „…”").
+    conflicting_names: list[str] = []
 
 
 class VerificationReport(BaseModel):
@@ -294,11 +296,6 @@ def find_quotes(text: str, transcript: Transcript) -> list[int]:
 
 
 _TITLES = re.compile(r"^(?:(?:dr|prof|mgr|inż|ks|hab|dr hab)\.?\s+)+", re.IGNORECASE)
-# Przypisanie "Imię Nazwisko, funkcja." na końcu linii – rozpoznawane bez listy mówców tylko
-# w transkrypcji bez etykiet; krótka funkcja, bez wykrzyknika i pytajnika (to nie zwrot do kogoś).
-_GENERIC_NAME_ATTRIBUTION = re.compile(
-    r"^[A-ZĄĆĘŁŃÓŚŹŻ][\w-]+(?: [A-ZĄĆĘŁŃÓŚŹŻ][\w-]+)+, [^!?]{1,80}$"
-)
 _QUOTE_START = re.compile(r"^[\W_]*(?:[A-ZĄĆĘŁŃÓŚŹŻ]|…|\.\.\.)|^[„“\"»«]")
 
 
@@ -316,7 +313,9 @@ def _is_attribution(part: str, names: list[str] | None, last: bool) -> bool:
         # Ze znanymi mówcami przypisanie nazwiskiem tylko dla nich – dowolne "Imię Nazwisko,"
         # pozwalałoby ukryć ciąg dalszy cytatu ("- … - Panie Premierze, oddaj nam…").
         return any(part.startswith(name) and part[len(name) : len(name) + 1] in ("", ",", ".") for name in names)
-    return last and bool(_GENERIC_NAME_ATTRIBUTION.match(part)) and len(part.split()) <= 10
+    # Bez etykiet mówców nie odróżnimy "Jan Kowalski, rolnik." od "Panie Ministrze, oddaj…" –
+    # bez czasownika mówienia cała linia jest sprawdzana jako cytat.
+    return False
 
 
 def _starts_new_quote(part: str, previous: str) -> bool:
@@ -370,7 +369,7 @@ def dash_quotes(paragraph: str, speakers=()) -> list[str]:
     return [q.strip() for q in quotes if q.strip()]
 
 
-def extract_inline_quotes(draft: ArticleDraft, speakers=()) -> list[tuple[str, str, str]]:
+def extract_inline_quotes(draft: ArticleDraft, speakers=()) -> list[tuple[str, str, str, str]]:
     """Pary (miejsce, cytat) dla wypowiedzi w cudzysłowie lub po myślniku w tekście draftu."""
     places = [(f"tytuł {i}", t) for i, t in enumerate(draft.title_options, start=1)]
     places.append(("lead", draft.lead))
@@ -383,20 +382,41 @@ def extract_inline_quotes(draft: ArticleDraft, speakers=()) -> list[tuple[str, s
         for match in _INLINE_QUOTE.finditer(text):
             quoted = next(g for g in match.groups() if g is not None).strip()
             if len(normalize(quoted).split()) >= _MIN_INLINE_QUOTE_WORDS:
-                found.append((location, quoted, "quote"))
+                found.append((location, quoted, "quote", text))
         for quoted in dash_quotes(text, [*speakers, *(q.speaker for q in draft.quotes)]):
             # Akapit z myślnikiem to zawsze wypowiedź (nie nazwa własna), więc sprawdzamy
             # też najkrótsze; może zawierać wtrącenia w cudzysłowie – sprawdzamy całość.
             if normalize(quoted):
-                found.append((location, quoted, "dash"))
+                found.append((location, quoted, "dash", text))
     return found
+
+
+_SENTENCE_END = re.compile(r"[.!?…]\s|\n")
+
+
+def _quote_context(source: str, quote: str, kind: str) -> str:
+    """Zdanie z cytatem (dla akapitu dialogowego – cała linia z przypisaniem)."""
+    for line in source.splitlines():
+        if kind == "dash":
+            if normalize(quote) and normalize(quote) in normalize(line):
+                return line
+            continue
+        position = line.find(quote)
+        if position < 0:
+            continue
+        ends_before = list(_SENTENCE_END.finditer(line, 0, position))
+        start = ends_before[-1].end() if ends_before else 0
+        after = _SENTENCE_END.search(line, position + len(quote) + 1)
+        return line[start : after.start() + 1 if after else len(line)]
+    return source
 
 
 def check_inline_quotes(draft: ArticleDraft, transcript: Transcript) -> list[InlineQuoteCheck]:
     declared = [(normalize(q.text), q) for q in draft.quotes]
     checks = []
     speakers = {segment.speaker for segment in transcript.segments if segment.speaker}
-    for location, text, kind in extract_inline_quotes(draft, speakers):
+    known_names = _speaker_names(speakers)
+    for location, text, kind, source in extract_inline_quotes(draft, speakers):
         matches = find_quotes(text, transcript)
         options, _ = _fragment_options(text)
         normalized = normalize(text)
@@ -411,18 +431,17 @@ def check_inline_quotes(draft: ArticleDraft, transcript: Transcript) -> list[Inl
             agreed = [
                 i for i in labelled if any(_same_speaker(q.speaker, transcript.segments[i].speaker) for q in candidates)
             ]
-            if not agreed:
-                # Deklaracja zweryfikowana w swoim miejscu nagrania (np. oryginalna wypowiedź
-                # bez etykiety, którą prowadzący potem powtórzył) też rozstrzyga przypisanie.
-                agreed = [
-                    check.segment_index
-                    for check in (check_quote(q, transcript) for q in candidates)
-                    if check.status == QuoteStatus.VERIFIED and check.segment_index in matches
-                ]
+
             is_declared = bool(agreed)
             # W ostrzeżeniu podajemy rozpoznanego mówcę – "None" nie dałoby się zadeklarować.
             index = agreed[0] if agreed else labelled[0]
         speaker = transcript.segments[index].speaker if index is not None else None
+        conflicting: list[str] = []
+        if matches and known_names:
+            mentioned = [n for n in known_names if n in _quote_context(source, text, kind)]
+            own = set(_speaker_names([speaker] if speaker else []))
+            if mentioned and not own.intersection(mentioned):
+                conflicting = mentioned
         checks.append(
             InlineQuoteCheck(
                 location=location,
@@ -432,13 +451,20 @@ def check_inline_quotes(draft: ArticleDraft, transcript: Transcript) -> list[Inl
                 speaker=speaker,
                 declared=is_declared,
                 kind=kind,
+                conflicting_names=conflicting,
             )
         )
     return checks
 
 
 def attribution_warnings(checks: list[InlineQuoteCheck]) -> list[str]:
-    return [
+    conflicts = [
+        f"W zdaniu z cytatem „{c.text}” ({c.location}) pada nazwisko {', '.join(c.conflicting_names)}, "
+        f"a w nagraniu te słowa mówi: {c.speaker or 'mówca nieustalony'}."
+        for c in checks
+        if c.verified and c.conflicting_names
+    ]
+    return conflicts + [
         f"Cytat „{c.text}” ({c.location}) nie ma na liście cytatów pozycji z mówcą – w nagraniu mówi: {c.speaker}. "
         "Sprawdź przypisanie w tekście."
         for c in checks
@@ -446,10 +472,11 @@ def attribution_warnings(checks: list[InlineQuoteCheck]) -> list[str]:
     ]
 
 
-def leftover_markers(draft: ArticleDraft) -> list[str]:
-    from app.quote_markers import leftover_markers as find
+def _leftover_markers(draft: ArticleDraft) -> list[str]:
+    # Import w funkcji: quote_markers korzysta z check_quote z tego modułu.
+    from app.quote_markers import leftover_markers
 
-    return find(draft)
+    return leftover_markers(draft)
 
 
 def _format_warnings(draft: ArticleDraft) -> list[str]:
@@ -484,6 +511,6 @@ def verify_draft(draft: ArticleDraft, transcript: Transcript) -> VerificationRep
         claims=claim_checks,
         inline_quotes=inline,
         attribution_warnings=attribution_warnings(inline),
-        unresolved_markers=leftover_markers(draft),
+        unresolved_markers=_leftover_markers(draft),
         format_warnings=_format_warnings(draft),
     )

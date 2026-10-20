@@ -8,6 +8,7 @@ Moduł nie zależy od bazy ani API: korzystają z niego zarówno zadania w tle
 aplikacji (`app/jobs.py`), jak i skrypt `scripts/auto.py`.
 """
 
+import re
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from enum import Enum
@@ -92,7 +93,9 @@ def label_speakers(engine: Engine, title: str, segments: list[TranscriptSegment]
 
     by_index = {}
     for label in labels.labels:
-        name = " ".join(label.speaker.replace(":", " ").split())[:_MAX_SPEAKER_LENGTH]
+        # Bez dwukropka (parser "Mówca: treść") i bez myślników (parser akapitów dialogowych).
+        cleaned = re.sub(r"\s+[-–—]\s+", ", ", label.speaker.replace(":", " "))
+        name = " ".join(cleaned.split())[:_MAX_SPEAKER_LENGTH]
         if 0 <= label.index < len(segments) and name:
             by_index[label.index] = name
     if len(by_index) < _MIN_LABEL_COVERAGE * len(segments):

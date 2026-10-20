@@ -13,6 +13,7 @@ from dataclasses import dataclass
 
 from app.engines.base import DraftRequest, Engine, MaterialInput
 from app.models import ArticleDraft, EvidencePack, Quote, Transcript
+from app.quote_markers import expand_markers
 from app.verification import QuoteStatus, VerificationReport, check_quote, segment_at, verify_draft
 
 
@@ -84,7 +85,10 @@ def analyze(engine: Engine, material: MaterialInput) -> EvidencePack:
 
 def write(engine: Engine, request: DraftRequest) -> DraftResult:
     transcript = request.material.transcript
-    draft = fix_quote_timecodes(engine.write_draft(request), transcript)
+    # Wersja ze znacznikami [[cytat:N]] zostaje do poprawki: przypisania generuje aplikacja
+    # z transkrypcji przy każdym rozwinięciu, więc model nie może ich "zamrozić" jako tekstu.
+    marked = fix_quote_timecodes(engine.write_draft(request), transcript)
+    draft = expand_markers(marked, transcript)
     report = verify_draft(draft, transcript)
     # Model językowy poprawia też wyraźne odstępstwa od formatu; regułowy silnik
     # nie umie przeredagować tekstu, więc dla niego poprawka dotyczy tylko błędów.
@@ -93,7 +97,7 @@ def write(engine: Engine, request: DraftRequest) -> DraftResult:
         return DraftResult(draft=draft, report=report, repaired=False, first_report=report)
 
     # Jedna runda poprawki: więcej rund rzadko pomaga, a mnoży koszt i czas.
-    repaired = fix_quote_timecodes(engine.repair_draft(request, draft, problems), transcript)
+    repaired = expand_markers(fix_quote_timecodes(engine.repair_draft(request, marked, problems), transcript), transcript)
     repaired_report = verify_draft(repaired, transcript)
     # Poprawka samego formatu nie może zepsuć poprawnych cytatów – wtedy zostaje pierwsza wersja.
     if (report.ok and not repaired_report.ok) or (report.strict_ok and not repaired_report.strict_ok):

@@ -589,6 +589,7 @@ function verificationBox(report) {
   report.quotes.filter((q) => q.status !== "VERIFIED").forEach((q) => items.push(`Cytat „${esc(q.quote.text)}”: ${esc(q.message)}`));
   report.claims.forEach((c) => items.push(`Teza „${esc(c.statement)}”: ${esc(c.problems.join("; "))}`));
   report.inline_quotes.filter((q) => !q.verified).forEach((q) => items.push(`${esc(q.location)}: „${esc(q.text)}” nie występuje w transkrypcji`));
+  (report.unresolved_markers || []).forEach((m) => items.push(`Nierozwinięty znacznik ${esc(m)} – usuń go albo wstaw cytat ręcznie`));
   return `<div class="verify err"><strong>✗ Draft nie przeszedł weryfikacji.</strong> Popraw przed zatwierdzeniem i eksportem.<ul>${items.map((i) => `<li>${i}</li>`).join("")}</ul></div>${attributionBox(report)}${formatBox(report)}`;
 }
 
