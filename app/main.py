@@ -171,6 +171,13 @@ def _recover_interrupted_jobs(store: Store) -> None:
             )
 
 
+def _approval(current: Material, viewed: Material) -> dict:
+    """Zatwierdzamy tylko draft, który redaktor oglądał (porównanie wersji z żądania)."""
+    if current.draft != viewed.draft or current.report is None or not current.report.ok:
+        raise HTTPException(status_code=409, detail="Draft zmienił się w trakcie – odśwież i sprawdź go ponownie")
+    return {"status": MaterialStatus.APPROVED}
+
+
 def _engine_call(fn, *args):
     try:
         return fn(*args)
@@ -269,16 +276,17 @@ def create_app(
             style=get_style(store, profile_id),
             target_words=options.target_words,
         )
-        queued = material.model_copy(
-            update={
-                "status": MaterialStatus.PROCESSING,
-                "job_stage": auto.Stage.QUEUED.value,
-                "job_error": None,
-                "style_profile_id": profile_id,
-                "auto_settings": options.model_copy(update={"style_profile_id": profile_id or ""}),
-            }
+        queued = store.update(
+            Material,
+            material.id,
+            status=MaterialStatus.PROCESSING,
+            job_stage=auto.Stage.QUEUED.value,
+            job_error=None,
+            style_profile_id=profile_id,
+            auto_settings=options.model_copy(update={"style_profile_id": profile_id or ""}),
         )
-        store.save(queued)
+        if queued is None:
+            raise HTTPException(status_code=404, detail="Nie ma takiego materiału")
         request.app.state.runner.submit(
             lambda: run_auto_job(
                 store,
@@ -328,30 +336,32 @@ def create_app(
         _ensure_idle(material)
         _parse(fields.transcript_raw, fields.transcript_has_speakers)
         get_style(store, fields.style_profile_id)
+        # Zapis przez store.update: nie wskrzesza usuniętego materiału i nie nadpisuje pól
+        # (draft, status) zapisanych w międzyczasie przez inną operację.
         transcript_changed = (
             fields.transcript_raw != material.transcript_raw
             or fields.transcript_has_speakers != material.transcript_has_speakers
         )
-        updated = material.model_copy(update=fields.model_dump())
+        changes = fields.model_dump()
         if fields.title != material.title:
             # Tytuł nadany przez redaktora nie może zostać nadpisany przez automat.
-            updated.title_auto = False
+            changes["title_auto"] = False
         if transcript_changed:
             # Materiał dowodowy i draft odnoszą się do starej transkrypcji – nie można ich zachować.
-            updated = updated.model_copy(
-                update={
-                    "evidence": None,
-                    "draft": None,
-                    "report": None,
-                    "mode": None,
-                    "status": MaterialStatus.NEW,
-                    "job_stage": None,
-                    "job_error": None,
-                    # Zastrzeżenia ASR dotyczyły poprzedniej wersji transkrypcji.
-                    "transcript_notes": [],
-                }
+            changes.update(
+                evidence=None,
+                draft=None,
+                report=None,
+                mode=None,
+                status=MaterialStatus.NEW,
+                job_stage=None,
+                job_error=None,
+                # Zastrzeżenia ASR dotyczyły poprzedniej wersji transkrypcji.
+                transcript_notes=[],
             )
-        store.save(updated)
+        updated = store.update(Material, material.id, **changes)
+        if updated is None:
+            raise HTTPException(status_code=404, detail="Nie ma takiego materiału")
         return _view(updated)
 
     @app.delete("/api/materials/{material_id}", status_code=204)
@@ -429,22 +439,28 @@ def create_app(
         return _view(updated)
 
     @app.post("/api/materials/{material_id}/approve")
-    def approve(material: Material = Depends(get_material), store: Store = Depends(get_store)) -> MaterialView:
+    def approve(
+        version: str | None = Query(None, description="updated_at materiału oglądanego przez redaktora"),
+        material: Material = Depends(get_material),
+        store: Store = Depends(get_store),
+    ) -> MaterialView:
         _ensure_idle(material)
+        if version is not None and version != material.updated_at:
+            raise HTTPException(status_code=409, detail="Draft zmienił się od wyświetlenia – odśwież i sprawdź go ponownie")
         if material.draft is None or material.report is None or not material.report.ok:
             raise HTTPException(status_code=409, detail="Zatwierdzić można tylko draft, który przeszedł weryfikację")
         updated = commit(
             store,
             material,
-            # Zatwierdzamy tylko ten draft, który oglądał redaktor – nie nowszy, zapisany w międzyczasie.
-            lambda current: {"status": MaterialStatus.APPROVED if current.draft == material.draft else current.status},
+            lambda current: _approval(current, material),
         )
         return _view(updated)
 
     @app.get("/api/materials/{material_id}/export")
     def export(
         format: str = "md",
-        control: bool = True,
+        # Domyślnie: materiał kontrolny w Markdown (do pracy redakcyjnej), bez niego w HTML (do CMS).
+        control: bool | None = None,
         title: int = Query(0, ge=0, le=2),
         material: Material = Depends(get_material),
     ) -> PlainTextResponse:
@@ -456,10 +472,12 @@ def create_app(
         if not report.ok:
             raise HTTPException(status_code=409, detail=report.problems())
         if format == "md":
-            return PlainTextResponse(render_markdown(material.draft, include_control=control), media_type="text/markdown")
+            include = True if control is None else control
+            return PlainTextResponse(render_markdown(material.draft, include_control=include), media_type="text/markdown")
         if format == "html":
+            include = False if control is None else control
             return PlainTextResponse(
-                render_html(material.draft, title_index=title, include_control=control), media_type="text/html"
+                render_html(material.draft, title_index=title, include_control=include), media_type="text/html"
             )
         raise HTTPException(status_code=422, detail="Format: md lub html")
 

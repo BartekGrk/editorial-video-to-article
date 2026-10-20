@@ -240,7 +240,8 @@ function drawProcessing(m) {
     <p class="muted small">${esc(m.source)}</p>
     <div class="card">
       <ol class="stages">${STAGES.map(([key, name], i) => {
-        const cls = failed && i === Math.max(current, 0) ? "err" : i < current || m.job_stage === "DONE" ? "done" : i === current && !failed ? "active" : "";
+        // Starsze wpisy mają job_stage "FAILED" (nieznany etap) – wtedy nie wskazujemy etapu błędu.
+        const cls = failed && i === current ? "err" : i < current || m.job_stage === "DONE" ? "done" : i === current && !failed ? "active" : "";
         return `<li class="${cls}">${name}</li>`;
       }).join("")}</ol>
       ${failed ? `<div class="verify err"><strong>Błąd:</strong> ${esc(m.job_error || "nieznany")}</div>
@@ -667,7 +668,8 @@ function drawDraft(root) {
     });
   });
   form.querySelector("#approve").addEventListener("click", (e) => busy(e.target, "…", async () => {
-    if (!setMaterial(await api(`/api/materials/${m.id}/approve`, { method: "POST" }))) return;
+    const version = encodeURIComponent(m.updated_at);
+    if (!setMaterial(await api(`/api/materials/${m.id}/approve?version=${version}`, { method: "POST" }))) return;
     drawWorkspace();
     toast("Draft zatwierdzony");
   }));
@@ -771,6 +773,10 @@ async function drawExport(root) {
       out.textContent = "Eksport zablokowany: " + error.message;
     }
   };
+  // HTML trafia do CMS – materiał kontrolny ("nie do publikacji") domyślnie tylko w Markdown.
+  const fmt = root.querySelector("#fmt");
+  const ctl = root.querySelector("#ctl");
+  fmt.addEventListener("change", () => { ctl.checked = fmt.value === "md"; });
   root.querySelectorAll("select, input").forEach((el) => el.addEventListener("change", refresh));
   root.querySelector("#copy").addEventListener("click", async () => {
     if (!text) return toast("Brak treści do skopiowania", true);

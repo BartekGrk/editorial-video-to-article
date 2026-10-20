@@ -465,3 +465,13 @@ def test_dialogue_attribution_comes_from_transcript_not_model(transcript, draft)
     wrong = draft.quotes[1].model_copy(update={"speaker": "Anna Nowak, minister"})
     marked = draft.model_copy(update={"quotes": [draft.quotes[0], wrong], "lead": "[[wypowiedź:2]]", "sections": []})
     assert expand_markers(marked, transcript).lead == "- Za te trzydzieści groszy nie będę stać w kolejce - mówi Przechodzień 2."
+
+
+def test_tenth_review_regressions(draft, transcript):
+    # cytat po linii zaczynającej się od przypisania
+    draft.sections[0].paragraphs.append("- mówi Jan Kowalski. - Rząd nas okrada i nic z tym nie robi.")
+    assert not verify_draft(draft, transcript).ok
+    draft.sections[0].paragraphs.pop()
+    # cudzysłów rozbity na dwie linie akapitu
+    draft.sections[0].paragraphs.append("Kowalski powiedział: „Rząd nas okrada\ni nic z tym nie robi od lat”.")
+    assert not verify_draft(draft, transcript).ok

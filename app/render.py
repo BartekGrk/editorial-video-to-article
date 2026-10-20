@@ -6,6 +6,7 @@ do CMS; służy sprawdzeniu draftu obok nagrania. Do HTML domyślnie jej nie
 dołączamy, bo ten format służy do wklejenia w edytor CMS.
 """
 
+import re
 from html import escape
 
 from app.models import ArticleDraft
@@ -35,9 +36,19 @@ def _control_lines(draft: ArticleDraft) -> list[str]:
     return lines
 
 
+_MD_BULLET = re.compile(r"^(\s*)([-+*])(\s)")
+_MD_ORDERED = re.compile(r"^(\s*\d+)([.)])(\s)")
+
+
+def _md_line(line: str) -> str:
+    """Akapit dialogowy "- cytat - mówi X." albo "13. emerytura…" nie może stać się listą w Markdown."""
+    line = _MD_BULLET.sub(r"\1\\\2\3", line)
+    return _MD_ORDERED.sub(r"\1\\\2\3", line)
+
+
 def _md_paragraph(text: str) -> str:
-    """Akapit dialogowy "- cytat - mówi X." bez escapowania stałby się w Markdown listą."""
-    return "\n".join(("\\" + line) if line.lstrip()[:1] in "-+*" and line.strip() else line for line in text.split("\n"))
+    # Dwie spacje na końcu linii to twarde złamanie – kolejne wypowiedzi zostają w osobnych liniach.
+    return "  \n".join(_md_line(line) for line in text.split("\n"))
 
 
 def render_markdown(draft: ArticleDraft, include_control: bool = True) -> str:
@@ -56,14 +67,18 @@ def render_markdown(draft: ArticleDraft, include_control: bool = True) -> str:
     return "\n".join(lines).rstrip() + "\n"
 
 
+def _html_paragraph(text: str) -> str:
+    return "<br>".join(escape(line) for line in text.split("\n"))
+
+
 def render_html(draft: ArticleDraft, title_index: int = 0, include_control: bool = False) -> str:
     """Fragment HTML artykułu z wybranym tytułem, gotowy do wklejenia w edytor."""
     title = draft.title_options[min(title_index, len(draft.title_options) - 1)]
-    parts = [f"<h1>{escape(title)}</h1>", f'<p class="lead"><strong>{escape(draft.lead)}</strong></p>']
+    parts = [f"<h1>{escape(title)}</h1>", f'<p class="lead"><strong>{_html_paragraph(draft.lead)}</strong></p>']
     for section in draft.sections:
         if section.heading:
             parts.append(f"<h2>{escape(section.heading)}</h2>")
-        parts += [f"<p>{escape(p)}</p>" for p in section.paragraphs]
+        parts += [f"<p>{_html_paragraph(p)}</p>" for p in section.paragraphs]
 
     if include_control:
         parts.append("<hr><h2>Materiał kontrolny (nie do publikacji)</h2><ul>")

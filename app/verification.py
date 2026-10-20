@@ -353,10 +353,9 @@ def dash_quotes(paragraph: str, speakers=(), starts_paragraph: bool = True) -> l
         # Dalsze linie akapitu od małej litery bez przypisania to zwykle lista, nie wypowiedź.
         if (number > 0 or not starts_paragraph) and not (_SENTENCE_START.match(content) or any(flags)):
             continue
-        if _ATTRIBUTION.match(content):
-            # Linia z samym przypisaniem ("- mówi Jan Kowalski.") pod cytatem w cudzysłowie.
-            continue
-        current: str | None = parts[0]
+        # Linia zaczynająca się od przypisania ("- mówi Jan Kowalski." pod cytatem w cudzysłowie)
+        # – pierwszy fragment to przypisanie; dalsze fragmenty po myślnikach nadal sprawdzamy.
+        current: str | None = None if _ATTRIBUTION.match(content) else parts[0]
         for index in range(1, len(parts)):
             part = parts[index]
             if flags[index]:
@@ -417,6 +416,11 @@ def extract_inline_quotes(draft: ArticleDraft, speakers=()) -> list[tuple[str, s
             # też najkrótsze; może zawierać wtrącenia w cudzysłowie – sprawdzamy całość.
             dash = dash_quotes(line, labels, starts_paragraph=line_no == 0)
             found += [(location, q, "dash", line) for q in dash if normalize(q)]
+        # Cudzysłów otwarty w jednej linii akapitu i zamknięty w następnej.
+        for match in _INLINE_QUOTE.finditer(text):
+            quoted = next(g for g in match.groups() if g is not None).strip()
+            if "\n" in match.group(0) and normalize(quoted):
+                found.append((location, " ".join(quoted.split()), "quote", text))
     return found
 
 
