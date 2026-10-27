@@ -20,6 +20,8 @@ Zrealizowane: Faza 1 w całości, większość Fazy 2 (profil stylu, ewaluacja, 
 - Bez agentów, bazy wektorowej i fine-tuningu. Styl jako jawny `EditorialStyleProfile`.
 - Tylko dane publiczne lub syntetyczne. Brak automatycznej publikacji.
 
+**Zmiana założeń (2026-10-27):** aplikacja powstaje dla jednej dziennikarki i działa na prywatnym komputerze (Docker, dostęp przez Tailscale). Profil stylu może odwzorowywać jej osobisty styl, bo powstaje na jej prośbę i przy jej udziale. Jej artykuły, transkrypcje i nagrania przechowujemy tylko lokalnie w `data/`, nigdy w repozytorium. Plan prac: [ROADMAP.md](ROADMAP.md).
+
 ## Decyzje implementacyjne
 
 1. **Stack** taki sam jak w `automation-ops-intelligence`: Python, FastAPI, Pydantic v2, pytest. Dodatkowo SQLite (stdlib) oraz frontend w czystym HTML/JS, bez frameworka i kroku budowania.
@@ -52,6 +54,4 @@ Zrealizowane: Faza 1 w całości, większość Fazy 2 (profil stylu, ewaluacja, 
 
 ## Następny krok (jeden)
 
-**Pilot z kluczem API na publicznych nagraniach:** uruchomić `python scripts/evaluate.py <katalog> --from-audio` z Claude na 5–10 publicznych nagraniach WP Finanse (pliki od redakcji lub z kanału, jeśli dostępne), porównać z opublikowanymi tekstami, uzupełnić ocenę redaktora w raporcie i dostroić prompty (`app/engines/prompts.py`) oraz profil (`app/styles/wp_finanse.json`).
-
-Otwarte pytania do redakcji (pola CMS, przykładowe pary, polityka danych) znajdują się w sekcji 8 specyfikacji.
+**M0 z [ROADMAP.md](ROADMAP.md):** uruchomienie na komputerze Bartka według [INSTALACJA-WINDOWS.md](INSTALACJA-WINDOWS.md) i pierwsze prawdziwe nagrania. Równolegle agenci mogą realizować M1 i M2.
